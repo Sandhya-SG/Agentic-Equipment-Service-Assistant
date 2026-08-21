@@ -1,0 +1,28 @@
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+# Start lenient: catch real bugs (errors, unused imports/vars, undefined names)
+# without drowning the team in style nitpicks. Tighten this later once the
+# codebase has had a pass of cleanup.
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes (unused imports, undefined names, etc.)
+    "I",   # isort (import order) — auto-fixable, low friction
+]
+ignore = [
+    "E501",   # line too long — already relaxed via line-length above, but keep noisy edge cases quiet
+    "BLE001", # blind `except Exception` — intentionally used in logging_sub.py so a
+              # logging failure can never crash the pipeline (see comments there).
+              # Not in `select` above yet, so this is a no-op today — kept here so
+              # the exception is documented if the team later adds the "B" (bugbear)
+              # rule set.
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Test files often have intentionally unused fixtures/imports
+"tests/*" = ["F401"]
+
+[tool.ruff.format]
+quote-style = "double"

@@ -3,9 +3,10 @@
 Run with: pytest tests/security/test_injection.py -v
 """
 
+import pytest
+
 from asa.graph.state import Chunk
 from asa.guardrails import injection as I
-
 
 # --- Direct injection detection ---
 
@@ -41,7 +42,7 @@ def test_detects_injected_turn():
 
 # --- False-positive protection (benign input must stay clean) ---
 
-import pytest
+
 
 
 @pytest.mark.parametrize("benign", [

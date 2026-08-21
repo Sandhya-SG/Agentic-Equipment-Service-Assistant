@@ -7,9 +7,9 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from asa.ingestion.metadata import parse_document
 from asa.ingestion.chunk import chunk_document
-from asa.ingestion.embed import write_chunks, CHROMA_DIR
+from asa.ingestion.embed import CHROMA_DIR, write_chunks
+from asa.ingestion.metadata import parse_document
 
 load_dotenv()
 

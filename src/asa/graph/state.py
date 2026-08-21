@@ -11,7 +11,6 @@ from dataclasses import dataclass, field
 from operator import add
 from typing import Annotated, Literal, Optional, TypedDict
 
-
 # --------------------------------------------------------------------------- #
 # Supporting types                                                            #
 # --------------------------------------------------------------------------- #

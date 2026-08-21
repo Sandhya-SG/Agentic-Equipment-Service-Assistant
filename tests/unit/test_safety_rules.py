@@ -8,7 +8,6 @@ import pytest
 from asa.graph.state import Step
 from asa.guardrails import safety_rules as S
 
-
 # --- Hazard detection (must force halt) ---
 
 @pytest.mark.parametrize("action,expected", [

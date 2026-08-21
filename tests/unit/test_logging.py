@@ -8,8 +8,8 @@ import json
 
 import pytest
 
-from asa.graph.state import TraceEvent
 from asa.components import logging_sub as L
+from asa.graph.state import TraceEvent
 
 
 @pytest.fixture(autouse=True)
@@ -38,7 +38,7 @@ def test_full_run_lifecycle_writes_records():
 
 
 def test_pii_is_redacted_before_write():
-    run_id = L.start_run("contact tanya@example.com password=hunter2")
+    L.start_run("contact tanya@example.com password=hunter2")
     content = L.AUDIT_LOG.read_text()
     assert "tanya@example.com" not in content
     assert "hunter2" not in content

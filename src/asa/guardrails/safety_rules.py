@@ -22,7 +22,6 @@ from dataclasses import dataclass, field
 
 from asa.graph.state import Step
 
-
 # --------------------------------------------------------------------------- #
 # Hard-halt triggers — matching any of these forces an execution HALT          #
 # --------------------------------------------------------------------------- #
