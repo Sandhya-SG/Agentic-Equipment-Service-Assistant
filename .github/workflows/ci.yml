@@ -1,0 +1,199 @@
+name: CI
+
+# Runs on every push/PR to main. This is the automated quality + security
+# gate for the LLMSecOps/MLSecOps deliverable (PRD §10, §7.3).
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  PYTHONPATH: src
+
+jobs:
+
+  # ---------------------------------------------------------------------
+  # 1. Lint & format — code quality gate
+  # ---------------------------------------------------------------------
+  lint:
+    name: Lint & Format
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Ruff check
+        run: ruff check .
+
+      - name: Ruff format check
+        run: ruff format --check .
+
+  # ---------------------------------------------------------------------
+  # 2. Dependency vulnerability scan — supply-chain security
+  # ---------------------------------------------------------------------
+  dependency-scan:
+    name: Dependency Vulnerability Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pip-audit
+
+      - name: Run pip-audit
+        run: pip-audit -r requirements.txt
+
+  # ---------------------------------------------------------------------
+  # 3. Unit tests — correctness of finished components
+  #    (currently: Safety rules, Logging & Monitoring)
+  # ---------------------------------------------------------------------
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: [lint]
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run unit tests
+        run: pytest tests/unit -v --junitxml=unit-results.xml
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-results-${{ matrix.python-version }}
+          path: unit-results.xml
+
+  # ---------------------------------------------------------------------
+  # 4. AI security tests — prompt injection / adversarial resistance
+  #    This is the concrete evidence for the LLMSecOps deliverable.
+  #    Required check: a failure here should block merge.
+  # ---------------------------------------------------------------------
+  security-tests:
+    name: AI Security Tests
+    runs-on: ubuntu-latest
+    needs: [lint]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run injection / adversarial test suite
+        run: pytest tests/security -v --junitxml=security-results.xml
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-test-results
+          path: security-results.xml
+
+  # ---------------------------------------------------------------------
+  # 5. Build — sanity check the container still builds
+  # ---------------------------------------------------------------------
+  build:
+    name: Build Container
+    runs-on: ubuntu-latest
+    needs: [unit-tests, security-tests, dependency-scan]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for Dockerfile
+        id: dockerfile-check
+        run: |
+          if [ -f "Dockerfile" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No Dockerfile found at repo root — skipping build step. Add a Dockerfile to enable this job."
+          fi
+
+      - name: Build image
+        if: steps.dockerfile-check.outputs.exists == 'true'
+        run: docker build -t asa:ci .
+        # NOTE: no push step — this is a demo/prototype pipeline (PRD §7.2).
+        # Add a push-to-registry step later if a real deploy target exists.
+
+  # =======================================================================
+  # COMING LATER — placeholder jobs, intentionally not active yet.
+  # These are blocked on the orchestrator/graph and the Request, Planning,
+  # and Diagnostic agents, which are currently stubs. Once those land,
+  # un-comment and wire these in so the pipeline matches the PRD §10.1
+  # full design (build/lint, scan, unit+integration+security, eval gate).
+  # =======================================================================
+
+  # integration-tests:
+  #   name: Integration Tests (graph end-to-end)
+  #   runs-on: ubuntu-latest
+  #   needs: [unit-tests, security-tests]
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - name: Set up Python
+  #       uses: actions/setup-python@v5
+  #       with:
+  #         python-version: "3.12"
+  #     - name: Install dependencies
+  #       run: |
+  #         python -m pip install --upgrade pip
+  #         pip install -r requirements.txt
+  #     - name: Ingest fixture corpus
+  #       run: python scripts/ingest.py
+  #     - name: Run integration tests
+  #       run: pytest tests/integration -v
+  #     # Requires: orchestrator.py wired, Request/Planning/Diagnostic agents real.
+
+  # eval-gate:
+  #   name: Evaluation Gate (grounding / escalation / injection-resistance thresholds)
+  #   runs-on: ubuntu-latest
+  #   needs: [integration-tests]
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - name: Run eval harness against eval/ datasets
+  #       run: python eval/run_eval.py --fail-below 0.9
+  #     # Requires: eval/ harness (TODO) + end-to-end pipeline (orchestrator done).
