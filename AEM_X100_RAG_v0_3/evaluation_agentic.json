@@ -1,0 +1,82 @@
+[
+  {
+    "id": "A01",
+    "category": "error_code",
+    "question": "What does error code E101 mean?",
+    "expected_tools": ["search_service_documents"],
+    "expected_source": "error_code_reference.pdf",
+    "expected_escalation": false
+  },
+  {
+    "id": "A02",
+    "category": "troubleshooting",
+    "question": "What should I check if the wafer is not detected after loading?",
+    "expected_tools": ["search_service_documents"],
+    "expected_source": "sensor_troubleshooting.pdf",
+    "expected_escalation": false
+  },
+  {
+    "id": "A03",
+    "category": "safety",
+    "question": "Can I open the panel while the equipment is powered?",
+    "expected_tools": ["search_service_documents"],
+    "expected_source": "safety_procedure.pdf",
+    "expected_escalation": false
+  },
+  {
+    "id": "A04",
+    "category": "maintenance",
+    "question": "What preventive maintenance should be performed?",
+    "expected_tools": ["search_service_documents"],
+    "expected_source": "preventive_maintenance.pdf",
+    "expected_escalation": false
+  },
+  {
+    "id": "A05",
+    "category": "escalation",
+    "question": "What should happen if the required procedure is not found?",
+    "expected_tools": ["search_service_documents"],
+    "expected_source": "escalation_procedure.pdf",
+    "expected_escalation": false
+  },
+  {
+    "id": "A06",
+    "category": "ambiguous",
+    "question": "The wafer is not moving properly. What should I do?",
+    "expected_tools": ["search_service_documents"],
+    "expected_source": "sensor_troubleshooting.pdf",
+    "expected_escalation": false
+  },
+  {
+    "id": "A07",
+    "category": "safety",
+    "question": "What should I do if error code E301 appears?",
+    "expected_tools": ["search_service_documents"],
+    "expected_source": "safety_procedure.pdf",
+    "expected_escalation": false
+  },
+  {
+    "id": "A08",
+    "category": "safety",
+    "question": "What should I do if the emergency stop is active?",
+    "expected_tools": ["search_service_documents"],
+    "expected_source": "safety_procedure.pdf",
+    "expected_escalation": false
+  },
+  {
+    "id": "A09",
+    "category": "out_of_knowledge",
+    "question": "How do I replace the AEM-X100 vacuum pump?",
+    "expected_tools": ["search_service_documents"],
+    "expected_source": null,
+    "expected_escalation": true
+  },
+  {
+    "id": "A10",
+    "category": "out_of_knowledge",
+    "question": "How do I recalibrate the AEM-X100 laser alignment system?",
+    "expected_tools": ["search_service_documents"],
+    "expected_source": null,
+    "expected_escalation": true
+  }
+]

@@ -1,0 +1,272 @@
+[
+  {
+    "id": "A01",
+    "category": "error_code",
+    "question": "What does error code E101 mean?",
+    "expected_source": "error_code_reference.pdf",
+    "retrieved_sources": [
+      "error_code_reference.pdf",
+      "escalation_procedure.pdf",
+      "escalation_procedure.pdf",
+      "startup_shutdown_procedure.pdf",
+      "sensor_troubleshooting.pdf"
+    ],
+    "source_pass": true,
+    "expected_escalation": false,
+    "actual_escalation": false,
+    "escalation_pass": true,
+    "expected_tools": [
+      "search_service_documents"
+    ],
+    "actual_tool": "search_service_documents",
+    "tool_pass": true,
+    "retrieval_attempts": 1,
+    "retrieval_status": "GOOD",
+    "senior_used": false,
+    "senior_decision": null,
+    "answer": "Answer:\nError code E101 indicates that \"Wafer presence not detected.\" The typical area associated with this error is the Wafer Presence Sensor (WPS) during loading. The initial documented action is to check the WPS status and loading conditions.\n\nSources:\n- error_code_reference.pdf, page 1"
+  },
+  {
+    "id": "A02",
+    "category": "troubleshooting",
+    "question": "What should I check if the wafer is not detected after loading?",
+    "expected_source": "sensor_troubleshooting.pdf",
+    "retrieved_sources": [
+      "wafer_loading_procedure.pdf",
+      "sensor_troubleshooting.pdf",
+      "error_code_reference.pdf",
+      "equipment_overview.pdf",
+      "escalation_procedure.pdf"
+    ],
+    "source_pass": true,
+    "expected_escalation": false,
+    "actual_escalation": false,
+    "escalation_pass": true,
+    "expected_tools": [
+      "search_service_documents"
+    ],
+    "actual_tool": "search_service_documents",
+    "tool_pass": true,
+    "retrieval_attempts": 1,
+    "retrieval_status": "GOOD",
+    "senior_used": false,
+    "senior_decision": null,
+    "answer": "Answer:\nIf the wafer is not detected after loading, you should check the following:\n\n1. Confirm that the system state is READY and that the load port reports available.\n2. Ensure there are no active safety-interlock alarms.\n3. Verify that the carrier and wafer identification information is accepted by the SCU.\n4. Record the displayed alarm or status message and search the Error Code Reference for the alarm code.\n5. If the alarm relates to the Wafer Presence Sensor (WPS), follow the Sensor Troubleshooting steps, which include checking the sensor status, confirming there are no obstructions, and ensuring the sensor alignment is correct.\n6. If the condition requires access to a protected area, stop and follow the Safety Procedure.\n7. If evidence remains insufficient after these checks, use the Escalation Procedure.\n\nSources:\n- wafer_loading_procedure.pdf, page 1\n- sensor_troubleshooting.pdf, page 1\n- error_code_reference.pdf, page 1"
+  },
+  {
+    "id": "A03",
+    "category": "safety",
+    "question": "Can I open the panel while the equipment is powered?",
+    "expected_source": "safety_procedure.pdf",
+    "retrieved_sources": [
+      "safety_procedure.pdf",
+      "startup_shutdown_procedure.pdf",
+      "preventive_maintenance.pdf",
+      "escalation_procedure.pdf",
+      "equipment_overview.pdf"
+    ],
+    "source_pass": true,
+    "expected_escalation": false,
+    "actual_escalation": false,
+    "escalation_pass": true,
+    "expected_tools": [
+      "search_service_documents"
+    ],
+    "actual_tool": "search_service_documents",
+    "tool_pass": true,
+    "retrieval_attempts": 1,
+    "retrieval_status": "GOOD",
+    "senior_used": false,
+    "senior_decision": null,
+    "answer": "Answer:\nThe documentation does not provide a clear answer regarding whether the panel can be opened while the equipment is powered. However, it emphasizes that safety conditions take precedence and that any maintenance task requiring access to a protected area must follow the Safety Procedure before work begins. Therefore, it is advisable to consult the applicable safety procedure and ensure that the equipment is in a safe state before attempting to open the panel.\n\nSources:\n- safety_procedure.pdf, page 1\n- startup_shutdown_procedure.pdf, page 1\n- preventive_maintenance.pdf, page 1"
+  },
+  {
+    "id": "A04",
+    "category": "maintenance",
+    "question": "What preventive maintenance should be performed?",
+    "expected_source": "preventive_maintenance.pdf",
+    "retrieved_sources": [
+      "preventive_maintenance.pdf",
+      "startup_shutdown_procedure.pdf",
+      "safety_procedure.pdf",
+      "equipment_overview.pdf",
+      "escalation_procedure.pdf"
+    ],
+    "source_pass": true,
+    "expected_escalation": false,
+    "actual_escalation": false,
+    "escalation_pass": true,
+    "expected_tools": [
+      "search_service_documents"
+    ],
+    "actual_tool": "search_service_documents",
+    "tool_pass": true,
+    "retrieval_attempts": 1,
+    "retrieval_status": "GOOD",
+    "senior_used": false,
+    "senior_decision": null,
+    "answer": "Answer:\nThe preventive maintenance activities for the AEM-X100 Wafer Handling System include the following:\n\n1. **Daily**: Perform a visual condition check and review alarms.\n2. **Weekly**: Inspect accessible sensor surfaces and the transfer area.\n3. **Monthly**: Review transfer-position behavior and maintenance counters.\n4. **Quarterly**: Review safety-interlock status and maintenance records.\n5. **As required**: Investigate repeated alarms or abnormal trends.\n\nThese activities must follow the approved site maintenance plan and any maintenance task requiring access to a protected area must adhere to the Safety Procedure before work begins.\n\nSources:\n- preventive_maintenance.pdf, page 1"
+  },
+  {
+    "id": "A05",
+    "category": "escalation",
+    "question": "What should happen if the required procedure is not found?",
+    "expected_source": "escalation_procedure.pdf",
+    "retrieved_sources": [
+      "escalation_procedure.pdf",
+      "error_code_reference.pdf",
+      "safety_procedure.pdf",
+      "preventive_maintenance.pdf",
+      "startup_shutdown_procedure.pdf"
+    ],
+    "source_pass": true,
+    "expected_escalation": false,
+    "actual_escalation": false,
+    "escalation_pass": true,
+    "expected_tools": [
+      "search_service_documents"
+    ],
+    "actual_tool": "search_service_documents",
+    "tool_pass": true,
+    "retrieval_attempts": 1,
+    "retrieval_status": "GOOD",
+    "senior_used": false,
+    "senior_decision": null,
+    "answer": "Answer:\nIf the required procedure is not found, the assistant should escalate the issue according to the escalation procedure. Specifically, it should trigger an escalation level based on the context, such as L1 for non-critical information or L2 for persistent technical faults. The assistant must provide the engineer with relevant details, including the observed request, equipment identifier, alarm codes, and reasons for escalation (escalation_procedure.pdf, page 1).\n\nSources:\n- escalation_procedure.pdf, page 1"
+  },
+  {
+    "id": "A06",
+    "category": "ambiguous",
+    "question": "The wafer is not moving properly. What should I do?",
+    "expected_source": "sensor_troubleshooting.pdf",
+    "retrieved_sources": [
+      "sensor_troubleshooting.pdf",
+      "error_code_reference.pdf",
+      "startup_shutdown_procedure.pdf",
+      "wafer_loading_procedure.pdf",
+      "equipment_overview.pdf"
+    ],
+    "source_pass": true,
+    "expected_escalation": false,
+    "actual_escalation": false,
+    "escalation_pass": true,
+    "expected_tools": [
+      "search_service_documents"
+    ],
+    "actual_tool": "search_service_documents",
+    "tool_pass": true,
+    "retrieval_attempts": 1,
+    "retrieval_status": "GOOD",
+    "senior_used": false,
+    "senior_decision": null,
+    "answer": "Answer:\nTo address the issue of the wafer not moving properly, first check the displayed alarm code on the Supervisory Control Unit (SCU). If the alarm code indicates a wafer presence issue (E101), follow the Wafer Presence Sensor troubleshooting steps, which include confirming the system state, checking for obstructions, and verifying sensor alignment (sensor_troubleshooting.pdf, page 1). If the alarm code indicates a transfer position issue (E201), check the position sensor evidence and escalate if the fault is persistent (error_code_reference.pdf, page 1). \n\nDo not attempt to bypass any interlocks or modify motion limits to force a transfer, as this is not advised (sensor_troubleshooting.pdf, page 1).\n\nSources:\n- sensor_troubleshooting.pdf, page 1\n- error_code_reference.pdf, page 1"
+  },
+  {
+    "id": "A07",
+    "category": "safety",
+    "question": "What should I do if error code E301 appears?",
+    "expected_source": "safety_procedure.pdf",
+    "retrieved_sources": [
+      "error_code_reference.pdf",
+      "escalation_procedure.pdf",
+      "escalation_procedure.pdf",
+      "startup_shutdown_procedure.pdf",
+      "safety_procedure.pdf"
+    ],
+    "source_pass": true,
+    "expected_escalation": false,
+    "actual_escalation": false,
+    "escalation_pass": true,
+    "expected_tools": [
+      "search_service_documents"
+    ],
+    "actual_tool": "search_service_documents",
+    "tool_pass": true,
+    "retrieval_attempts": 1,
+    "retrieval_status": "GOOD",
+    "senior_used": false,
+    "senior_decision": null,
+    "answer": "Answer:\nIf error code E301 appears, you should stop operation and follow the Safety Procedure. This error indicates that the safety interlock is active, which is a safety-critical condition that requires immediate attention.\n\nSources:\n- error_code_reference.pdf, page 1\n- safety_procedure.pdf, page 1"
+  },
+  {
+    "id": "A08",
+    "category": "safety",
+    "question": "What should I do if the emergency stop is active?",
+    "expected_source": "safety_procedure.pdf",
+    "retrieved_sources": [
+      "safety_procedure.pdf",
+      "error_code_reference.pdf",
+      "startup_shutdown_procedure.pdf",
+      "escalation_procedure.pdf",
+      "equipment_overview.pdf"
+    ],
+    "source_pass": true,
+    "expected_escalation": false,
+    "actual_escalation": false,
+    "escalation_pass": true,
+    "expected_tools": [
+      "search_service_documents"
+    ],
+    "actual_tool": "search_service_documents",
+    "tool_pass": true,
+    "retrieval_attempts": 1,
+    "retrieval_status": "GOOD",
+    "senior_used": false,
+    "senior_decision": null,
+    "answer": "Answer:\nIf the emergency stop is active, you should not continue operation and must follow the site safety/escalation process. This is a safety-critical condition that requires immediate attention and adherence to safety procedures.\n\nSources:\n- error_code_reference.pdf, page 1\n- safety_procedure.pdf, page 1"
+  },
+  {
+    "id": "A09",
+    "category": "out_of_knowledge",
+    "question": "How do I replace the AEM-X100 vacuum pump?",
+    "expected_source": null,
+    "retrieved_sources": [
+      "equipment_overview.pdf",
+      "sensor_troubleshooting.pdf",
+      "error_code_reference.pdf",
+      "startup_shutdown_procedure.pdf",
+      "wafer_loading_procedure.pdf"
+    ],
+    "source_pass": true,
+    "expected_escalation": true,
+    "actual_escalation": true,
+    "escalation_pass": true,
+    "expected_tools": [
+      "search_service_documents"
+    ],
+    "actual_tool": "search_service_documents",
+    "tool_pass": true,
+    "retrieval_attempts": 2,
+    "retrieval_status": "INSUFFICIENT",
+    "senior_used": true,
+    "senior_decision": "ESCALATE",
+    "answer": null
+  },
+  {
+    "id": "A10",
+    "category": "out_of_knowledge",
+    "question": "How do I recalibrate the AEM-X100 laser alignment system?",
+    "expected_source": null,
+    "retrieved_sources": [
+      "startup_shutdown_procedure.pdf",
+      "sensor_troubleshooting.pdf",
+      "equipment_overview.pdf",
+      "escalation_procedure.pdf",
+      "preventive_maintenance.pdf"
+    ],
+    "source_pass": true,
+    "expected_escalation": true,
+    "actual_escalation": true,
+    "escalation_pass": true,
+    "expected_tools": [
+      "search_service_documents"
+    ],
+    "actual_tool": "search_service_documents",
+    "tool_pass": true,
+    "retrieval_attempts": 2,
+    "retrieval_status": "INSUFFICIENT",
+    "senior_used": true,
+    "senior_decision": "ESCALATE",
+    "answer": null
+  }
+]
