@@ -1,0 +1,35 @@
+version: "3.9"
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: aem-backend
+    ports:
+      - "8000:8000"
+    environment:
+      APP_NAME: ${APP_NAME:-Equipment Service Assistant}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      BACKEND_HOST: 0.0.0.0
+      BACKEND_PORT: 8000
+      MODEL_PROVIDER: ${MODEL_PROVIDER:-ollama}
+      MODEL_NAME: ${MODEL_NAME:-llama3.1}
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+      LANGFUSE_HOST: ${LANGFUSE_HOST:-http://localhost:3000}
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: aem-frontend
+    ports:
+      - "5000:5000"
+    environment:
+      BACKEND_URL: http://backend:8000
+      FLASK_ENV: development
+    depends_on:
+      - backend
+    restart: unless-stopped
