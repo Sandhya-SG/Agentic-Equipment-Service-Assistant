@@ -108,7 +108,7 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run unit tests
-        run: pytest tests/unit -v --junitxml=unit-results.xml
+        run: pytest tests -v --junitxml=unit-results.xml
 
       - name: Upload test results
         if: always()
