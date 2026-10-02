@@ -11,11 +11,13 @@ def generate_reply(message: str) -> str:
     model_name = os.getenv("MODEL_NAME", "llama3.1")
 
     if provider == "ollama":
-        payload = json.dumps({
-            "model": model_name,
-            "prompt": message,
-            "stream": False,
-        }).encode("utf-8")
+        payload = json.dumps(
+            {
+                "model": model_name,
+                "prompt": message,
+                "stream": False,
+            }
+        ).encode("utf-8")
 
         req = urllib.request.Request(
             "http://localhost:11434/api/generate",

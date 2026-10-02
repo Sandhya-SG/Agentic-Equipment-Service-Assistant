@@ -82,7 +82,9 @@ def ask_backend():
             body = response.read().decode("utf-8")
             return jsonify(json.loads(body)), response.status
     except Exception as exc:  # pragma: no cover - network failure path
-        return jsonify({
-            "status": "error",
-            "error": str(exc),
-        }), 502
+        return jsonify(
+            {
+                "status": "error",
+                "error": str(exc),
+            }
+        ), 502
