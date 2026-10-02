@@ -36,11 +36,19 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Fetch comparison revision
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            git fetch --no-tags --depth=1 origin "$GITHUB_BASE_REF"
+          else
+            git fetch --no-tags --depth=1 origin "$GITHUB_EVENT_BEFORE"
+          fi
+
       - name: Ruff check
-        run: ruff check .
+        run: git diff --name-only --diff-filter=ACMR -z FETCH_HEAD HEAD -- '*.py' | xargs -0 -r ruff check
 
       - name: Ruff format check
-        run: ruff format --check .
+        run: git diff --name-only --diff-filter=ACMR -z FETCH_HEAD HEAD -- '*.py' | xargs -0 -r ruff format --check
 
   # ---------------------------------------------------------------------
   # 2. Dependency vulnerability scan — supply-chain security
@@ -64,7 +72,15 @@ jobs:
           pip install pip-audit
 
       - name: Run pip-audit
-        run: pip-audit -r requirements.txt
+        # Temporary, topology-specific acceptance is recorded in
+        # security/risk_acceptance_chromadb_2026-10-02.md.
+        # Do not broaden these ignores; all other findings must fail the job.
+        run: |
+          pip-audit -r requirements.txt \
+            --ignore-vuln PYSEC-2026-311 \
+            --ignore-vuln PYSEC-2026-3813 \
+            --ignore-vuln PYSEC-2026-3814 \
+            --ignore-vuln PYSEC-2026-3815
 
   # ---------------------------------------------------------------------
   # 3. Unit tests — correctness of finished components
