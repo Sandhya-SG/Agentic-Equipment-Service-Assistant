@@ -2,8 +2,16 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# Patch OS packages that have fixes since the base image was built.
+RUN apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY requirements-frontend.txt .
-RUN pip install --no-cache-dir -r requirements-frontend.txt
+# setuptools and wheel are build tools the app does not need at runtime; removing
+# them also removes the vulnerable copies bundled with them.
+RUN pip install --no-cache-dir -r requirements-frontend.txt \
+    && pip uninstall -y setuptools wheel
 
 COPY frontend ./frontend
 
