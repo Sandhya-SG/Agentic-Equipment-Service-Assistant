@@ -6,6 +6,9 @@ COPY requirements-backend.txt .
 RUN pip install --no-cache-dir -r requirements-backend.txt
 
 COPY app ./app
+COPY src/asa ./src/asa
+
+ENV PYTHONPATH=/app/src
 
 EXPOSE 8000
 
