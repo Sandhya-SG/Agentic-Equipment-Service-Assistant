@@ -184,7 +184,7 @@ jobs:
         run: docker build --file ${{ matrix.dockerfile }} --tag "$IMAGE:scan" .
 
       - name: Scan ${{ matrix.service }} image with Trivy
-        uses: aquasecurity/trivy-action@0.33.1
+        uses: aquasecurity/trivy-action@v0.36.0
         env:
           TRIVY_DISABLE_VEX_NOTICE: "true"
         with:
