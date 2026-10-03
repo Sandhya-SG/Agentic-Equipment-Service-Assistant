@@ -16,6 +16,11 @@ class Settings:
         self.model_provider = os.getenv("MODEL_PROVIDER", "ollama")
         self.model_name = os.getenv("MODEL_NAME", "llama3.1")
 
+        self.ollama_base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
+        self.ollama_timeout = float(os.getenv("OLLAMA_TIMEOUT", "30"))
+        self.ollama_max_retries = int(os.getenv("OLLAMA_MAX_RETRIES", "2"))
+        self.ollama_retry_backoff = float(os.getenv("OLLAMA_RETRY_BACKOFF", "0.5"))
+
         self.allowed_origins = os.getenv(
             "ALLOWED_ORIGINS",
             "http://localhost:5000,http://127.0.0.1:5000",
