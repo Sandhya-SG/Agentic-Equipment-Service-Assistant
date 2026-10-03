@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -7,11 +9,20 @@ from app.routes.health import router as health_router
 from app.schemas.request import ChatRequest
 from app.schemas.response import ChatResponse
 from app.services.chat_service import handle_chat
+from asa.components.tracing import flush_tracing
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    yield
+    flush_tracing()  # send any buffered Langfuse traces before exiting
+
 
 app = FastAPI(
     title=settings.app_name,
     version="0.1.0",
     description="Starter backend for the AEM AI assistant.",
+    lifespan=lifespan,
 )
 
 app.add_middleware(

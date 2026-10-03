@@ -1,3 +1,6 @@
 fastapi>=0.110.0
 uvicorn>=0.29.0
 pydantic>=2.6.0
+langgraph>=1.0.0
+langchain-core>=1.0.0
+langfuse>=4.0.0

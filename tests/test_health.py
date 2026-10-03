@@ -19,8 +19,9 @@ def test_health_route():
 
 def test_chat_route(monkeypatch):
     import app.services.chat_service as chat_service
+    from asa.graph.state import GenerationResult
 
-    monkeypatch.setattr(chat_service, "generate_reply", lambda prompt: "hi there")
+    monkeypatch.setattr(chat_service, "generate_with_usage", lambda prompt: GenerationResult(text="hi there"))
     response = client.post(
         "/api/chat",
         json={"message": "hello"},

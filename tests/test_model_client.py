@@ -89,3 +89,36 @@ def test_generate_reply_falls_back_when_ollama_down(monkeypatch):
     monkeypatch.setattr(llm_client.urllib.request, "urlopen", down_urlopen)
 
     assert generate_reply("hello") == llm_client.FALLBACK_MESSAGE
+
+
+def test_generate_with_usage_reads_token_counts(monkeypatch):
+    import app.services.llm_client as llm_client
+
+    class DummyResponse:
+        def read(self):
+            return b'{"response":"hi","prompt_eval_count":12,"eval_count":5}'
+
+    monkeypatch.setattr(llm_client.urllib.request, "urlopen", lambda req, timeout=30: DummyResponse())
+
+    result = llm_client.generate_with_usage("hello")
+
+    assert result.text == "hi"
+    assert (result.prompt_tokens, result.completion_tokens) == (12, 5)
+
+
+def test_generate_with_usage_raises_when_model_unavailable(monkeypatch):
+    import urllib.error
+
+    import pytest
+
+    import app.services.llm_client as llm_client
+    from asa.graph.state import ModelUnavailable
+
+    def down(req, timeout=30):
+        raise urllib.error.URLError("refused")
+
+    monkeypatch.setattr(llm_client.settings, "ollama_max_retries", 0)
+    monkeypatch.setattr(llm_client.urllib.request, "urlopen", down)
+
+    with pytest.raises(ModelUnavailable):
+        llm_client.generate_with_usage("hello")

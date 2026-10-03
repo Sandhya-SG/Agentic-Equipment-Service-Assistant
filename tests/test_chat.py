@@ -3,7 +3,7 @@ from fastapi.testclient import TestClient
 
 import app.services.chat_service as chat_service
 from app.main import app
-from app.services.llm_client import FALLBACK_MESSAGE
+from asa.graph.state import GenerationResult, ModelUnavailable
 
 client = TestClient(app)
 
@@ -11,13 +11,15 @@ client = TestClient(app)
 @pytest.fixture
 def model(monkeypatch):
     """Replace the model call; tests set model['reply'] and read model['prompts']."""
-    state = {"reply": "Check the fuse and the power switch.", "prompts": []}
+    state = {"reply": "Check the fuse and the power switch.", "prompts": [], "down": False}
 
-    def fake_generate_reply(prompt):
+    def fake_generate(prompt):
         state["prompts"].append(prompt)
-        return state["reply"]
+        if state["down"]:
+            raise ModelUnavailable("down")
+        return GenerationResult(text=state["reply"], model="test-model", prompt_tokens=11, completion_tokens=7)
 
-    monkeypatch.setattr(chat_service, "generate_reply", fake_generate_reply)
+    monkeypatch.setattr(chat_service, "generate_with_usage", fake_generate)
     return state
 
 
@@ -64,7 +66,7 @@ def test_chat_adds_ppe_for_non_escalate_hazard(model):
 
 
 def test_chat_returns_503_when_model_unavailable(model):
-    model["reply"] = FALLBACK_MESSAGE
+    model["down"] = True
     response = client.post("/api/chat", json={"message": "hello"})
     assert response.status_code == 503
     assert response.json()["status"] == "unavailable"
