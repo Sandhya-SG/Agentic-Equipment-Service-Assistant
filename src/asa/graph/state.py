@@ -15,9 +15,11 @@ from typing import Annotated, Literal, Optional, TypedDict
 # Supporting types                                                            #
 # --------------------------------------------------------------------------- #
 
+
 @dataclass
 class Chunk:
     """A retrieved passage with full provenance."""
+
     chunk_id: str
     doc_id: str
     section_id: str
@@ -30,6 +32,7 @@ class Chunk:
 @dataclass
 class RankedCause:
     """A candidate root cause, ranked by likelihood, tied to its evidence."""
+
     cause: str
     likelihood: float
     supporting_chunk_ids: list[str] = field(default_factory=list)
@@ -43,6 +46,7 @@ class Step:
     execution authority' guardrail at the type level. The system advises;
     the human acts.
     """
+
     order: int
     action: str
     supporting_chunk_ids: list[str] = field(default_factory=list)
@@ -52,6 +56,7 @@ class Step:
 @dataclass
 class Citation:
     """A user-facing citation pointing to the exact supporting text."""
+
     doc_id: str
     section_id: str
     revision: str
@@ -61,15 +66,31 @@ class Citation:
 @dataclass
 class TraceEvent:
     """One entry in the audit trail."""
+
     agent: str
     action: str
     timestamp: str
     detail: dict = field(default_factory=dict)
 
 
+@dataclass
+class GenerationResult:
+    """One model call: the text plus the usage the tracer records."""
+
+    text: str
+    model: str = ""
+    prompt_tokens: Optional[int] = None
+    completion_tokens: Optional[int] = None
+
+
+class ModelUnavailable(Exception):
+    """The model could not be reached after retries."""
+
+
 # --------------------------------------------------------------------------- #
 # The shared state                                                            #
 # --------------------------------------------------------------------------- #
+
 
 class AgentState(TypedDict, total=False):
     """The object passed node-to-node through the graph.
@@ -112,6 +133,10 @@ class AgentState(TypedDict, total=False):
     citations: list[Citation]
     final_answer: str
 
+    # --- Simple end-to-end flow writes ---
+    draft_answer: str  # the model's raw reply, before the safety check
+    status: Literal["ok", "blocked", "escalated", "unavailable"]
+
     # --- Control flow ---
     escalated: bool
     escalation_reason: str
@@ -149,6 +174,9 @@ def new_state(raw_query: str) -> AgentState:
         ppe_required=[],
         confidence=0.0,
         citations=[],
+        final_answer="",
+        draft_answer="",
+        status="ok",
         escalated=False,
         terminate=False,
         trace=[],

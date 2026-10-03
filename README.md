@@ -48,7 +48,7 @@ Set the import path so the `app` and `asa` packages are found:
 Start the backend in one terminal:
 
 ```
-uvicorn app.main:app --reload --port 8000
+uvicorn app.main:app --reload --port 8000 --env-file .env
 ```
 
 Start the frontend in a second terminal (activate the venv and set `PYTHONPATH` there too):
@@ -97,6 +97,32 @@ If a release misbehaves (errors, failing health check, unsafe or wrong answers),
 4. **Fix forward in git.** Revert the bad change with `git revert <commit>` and open a PR. Do not force-push `main`. Merging the revert publishes a new image with a new `sha-` tag.
 
 Never roll back to `latest`, because it always points at the newest build. Use the `sha-` tags, which never change.
+
+## How a request flows
+
+`/api/chat` runs each question through a LangGraph workflow in `src/asa/graph`:
+
+```
+guard_input -> retrieve -> generate -> safety_check -> respond
+     |                         |
+  blocked (end)          unavailable (end)
+```
+
+- **guard_input** blocks prompt-injection attempts before the model is called.
+- **retrieve** is a placeholder that returns no documents until RAG is connected. Replace `retrieve` in `src/asa/agents/rag.py` and keep its signature; citations then appear in the response `sources`.
+- **generate** calls the model through `app/services/llm_client.py` (with retries).
+- **safety_check** looks for equipment hazards in the question and the reply. High-voltage and stored-energy tasks are escalated and the model's guidance is withheld.
+- The shared state is `AgentState` in `src/asa/graph/state.py`. Its `trace` field records what each step did.
+
+The graph can be run and tested without the web server: see `tests/unit/test_simple_flow.py`.
+
+## Langfuse tracing (optional)
+
+Set `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` and `LANGFUSE_HOST` in `.env` to turn tracing on. Without the keys the app runs normally with no tracing.
+
+- Use the host that matches where your Langfuse project lives, for example `https://us.cloud.langfuse.com` or `https://cloud.langfuse.com`. A wrong host means traces are silently dropped (a `localhost` default only works if you run Langfuse yourself).
+- Each request becomes one trace named `chat` with a span per step. The model call records the model name, token counts and latency.
+- Spans hold structure only (status, hazard names, counts). Prompt and reply text are sent only when `LANGFUSE_CAPTURE_CONTENT=true`, and are redacted and truncated first. Keep it `false` if questions can contain personal data.
 
 ## Run the tests
 

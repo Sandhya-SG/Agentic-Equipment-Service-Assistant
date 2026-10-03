@@ -39,9 +39,9 @@ from asa.graph.state import TraceEvent
 # --------------------------------------------------------------------------- #
 
 LOG_DIR = Path("logs")
-AUDIT_LOG = LOG_DIR / "audit.jsonl"        # append-only run + event records
+AUDIT_LOG = LOG_DIR / "audit.jsonl"  # append-only run + event records
 FEEDBACK_LOG = LOG_DIR / "feedback.jsonl"  # user feedback records
-METRICS_LOG = LOG_DIR / "metrics.jsonl"    # per-run operational metrics
+METRICS_LOG = LOG_DIR / "metrics.jsonl"  # per-run operational metrics
 
 
 # --------------------------------------------------------------------------- #
@@ -50,7 +50,7 @@ METRICS_LOG = LOG_DIR / "metrics.jsonl"    # per-run operational metrics
 
 _REDACTION_PATTERNS = [
     (re.compile(r"\b[\w.%+-]+@[\w.-]+\.[A-Za-z]{2,}\b"), "[EMAIL]"),
-    (re.compile(r"\b(?:\d[ -]*?){13,16}\b"), "[CARD]"),          # card-like digit runs
+    (re.compile(r"\b(?:\d[ -]*?){13,16}\b"), "[CARD]"),  # card-like digit runs
     (re.compile(r"(?i)\b(api[_-]?key|token|password|secret)\s*[:=]\s*\S+"), r"\1=[REDACTED]"),
 ]
 
@@ -69,9 +69,15 @@ def _redact(value: Any) -> Any:
     return value
 
 
+def redact(value: Any) -> Any:
+    """Public wrapper so other components (e.g. tracing) reuse the same redaction."""
+    return _redact(value)
+
+
 # --------------------------------------------------------------------------- #
 # Low-level append (tamper-evident, non-blocking)                             #
 # --------------------------------------------------------------------------- #
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -121,51 +127,64 @@ def _append(path: Path, record: dict) -> bool:
 # Public API                                                                  #
 # --------------------------------------------------------------------------- #
 
+
 def start_run(raw_query: str) -> str:
     """Open a new run, returning a run_id used to correlate all later records."""
     run_id = uuid.uuid4().hex[:12]
-    _append(AUDIT_LOG, {
-        "type": "run_start",
-        "run_id": run_id,
-        "timestamp": _now_iso(),
-        "query": raw_query,
-    })
+    _append(
+        AUDIT_LOG,
+        {
+            "type": "run_start",
+            "run_id": run_id,
+            "timestamp": _now_iso(),
+            "query": raw_query,
+        },
+    )
     return run_id
 
 
 def log_trace(run_id: str, trace: list[TraceEvent]) -> bool:
     """Persist the agent trace events accumulated in state['trace'] for a run."""
     events = [asdict(e) if isinstance(e, TraceEvent) else dict(e) for e in trace]
-    return _append(AUDIT_LOG, {
-        "type": "trace",
-        "run_id": run_id,
-        "timestamp": _now_iso(),
-        "events": events,
-    })
+    return _append(
+        AUDIT_LOG,
+        {
+            "type": "trace",
+            "run_id": run_id,
+            "timestamp": _now_iso(),
+            "events": events,
+        },
+    )
 
 
 def end_run(run_id: str, final_state: dict) -> bool:
     """Close a run, recording the outcome (answer/escalation) and key signals."""
-    return _append(AUDIT_LOG, {
-        "type": "run_end",
-        "run_id": run_id,
-        "timestamp": _now_iso(),
-        "escalated": final_state.get("escalated", False),
-        "safety_verdict": final_state.get("safety_verdict"),
-        "confidence": final_state.get("confidence"),
-        "answer_preview": (final_state.get("final_answer") or "")[:300],
-    })
+    return _append(
+        AUDIT_LOG,
+        {
+            "type": "run_end",
+            "run_id": run_id,
+            "timestamp": _now_iso(),
+            "escalated": final_state.get("escalated", False),
+            "safety_verdict": final_state.get("safety_verdict"),
+            "confidence": final_state.get("confidence"),
+            "answer_preview": (final_state.get("final_answer") or "")[:300],
+        },
+    )
 
 
 def log_feedback(run_id: str, helpful: bool, comment: str = "") -> bool:
     """Capture user feedback against a run (feeds the improvement loop)."""
-    return _append(FEEDBACK_LOG, {
-        "type": "feedback",
-        "run_id": run_id,
-        "timestamp": _now_iso(),
-        "helpful": helpful,
-        "comment": comment,
-    })
+    return _append(
+        FEEDBACK_LOG,
+        {
+            "type": "feedback",
+            "run_id": run_id,
+            "timestamp": _now_iso(),
+            "helpful": helpful,
+            "comment": comment,
+        },
+    )
 
 
 def emit_metrics(run_id: str, final_state: dict, latency_s: float) -> dict:
@@ -188,6 +207,7 @@ def emit_metrics(run_id: str, final_state: dict, latency_s: float) -> dict:
 # --------------------------------------------------------------------------- #
 # Monitoring aggregation (for dashboards / the evaluation report)             #
 # --------------------------------------------------------------------------- #
+
 
 def _read(path: Path) -> list[dict]:
     if not path.exists():
