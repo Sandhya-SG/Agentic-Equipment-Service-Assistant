@@ -15,9 +15,14 @@ services:
       BACKEND_PORT: 8000
       MODEL_PROVIDER: ${MODEL_PROVIDER:-ollama}
       MODEL_NAME: ${MODEL_NAME:-llama3.1}
+      OLLAMA_BASE_URL: ${DOCKER_OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_TIMEOUT: ${OLLAMA_TIMEOUT:-30}
+      OLLAMA_MAX_RETRIES: ${OLLAMA_MAX_RETRIES:-2}
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
       LANGFUSE_HOST: ${LANGFUSE_HOST:-http://localhost:3000}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
 
   frontend:
