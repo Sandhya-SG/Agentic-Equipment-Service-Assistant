@@ -82,6 +82,22 @@ docker pull ghcr.io/sandhya-sg/asa-frontend:latest
 
 Every image is also tagged `sha-<first 7 characters of the commit>`. **To roll back, redeploy the earlier `sha-` tag.** If the pull is denied, run `docker login ghcr.io` with a GitHub token that has `read:packages`, or ask the maintainer to make the packages visible to the team.
 
+## Rollback
+
+If a release misbehaves (errors, failing health check, unsafe or wrong answers), go back to the last good version. Rollback means running an earlier image, not editing code on the server.
+
+1. **Find the last good version.** Open the repo's Actions tab, find the last green run on `main` before the problem, and note its commit SHA. The image tag is `sha-` plus the first 7 characters. The Packages page lists the tags that exist.
+2. **Run that version.** In Docker Compose, set the image tags and restart:
+   ```
+   docker pull ghcr.io/sandhya-sg/asa-backend:sha-<good-sha>
+   docker pull ghcr.io/sandhya-sg/asa-frontend:sha-<good-sha>
+   ```
+   then point the `backend` and `frontend` services at those tags (`image:` instead of `build:`) and run `docker compose up -d`.
+3. **Verify.** Check `http://localhost:8000/health` returns `ok`, send one test question in the UI, and look at the backend logs for errors (`docker compose logs backend`).
+4. **Fix forward in git.** Revert the bad change with `git revert <commit>` and open a PR. Do not force-push `main`. Merging the revert publishes a new image with a new `sha-` tag.
+
+Never roll back to `latest`, because it always points at the newest build. Use the `sha-` tags, which never change.
+
 ## Run the tests
 
 ```
