@@ -151,22 +151,64 @@ jobs:
           path: security-results.xml
 
   # ---------------------------------------------------------------------
-  # 5. Build — verify both application containers build
+  # 5. Build, scan and publish both application containers
+  #    - every run: build both images and scan them with Trivy
+  #    - push to main only: publish to GHCR, tagged with the commit SHA
+  #      (roll back by redeploying an earlier sha-<commit> tag)
   # ---------------------------------------------------------------------
   build:
     name: Build Containers
     runs-on: ubuntu-latest
     needs: [unit-tests, security-tests, dependency-scan]
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        include:
+          - service: backend
+            dockerfile: Dockerfile.backend
+          - service: frontend
+            dockerfile: Dockerfile.frontend
+    env:
+      PUBLISH: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build backend image
-        run: docker build --file Dockerfile.backend --tag asa-backend:ci .
+      - name: Set image name
+        run: |
+          # GHCR requires a lowercase repository path
+          echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/asa-${{ matrix.service }}" >> "$GITHUB_ENV"
 
-      - name: Build frontend image
-        run: docker build --file Dockerfile.frontend --tag asa-frontend:ci .
-        # NOTE: no push step — this is a demo/prototype pipeline (PRD §7.2).
-        # Add a push-to-registry step later if a real deploy target exists.
+      - name: Build ${{ matrix.service }} image
+        run: docker build --file ${{ matrix.dockerfile }} --tag "$IMAGE:scan" .
+
+      - name: Scan ${{ matrix.service }} image with Trivy
+        uses: aquasecurity/trivy-action@v0.36.0
+        env:
+          TRIVY_DISABLE_VEX_NOTICE: "true"
+        with:
+          image-ref: ${{ env.IMAGE }}:scan
+          format: table
+          exit-code: "1"
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+
+      - name: Log in to GHCR
+        if: env.PUBLISH == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push ${{ matrix.service }} image
+        if: env.PUBLISH == 'true'
+        run: |
+          docker tag "$IMAGE:scan" "$IMAGE:sha-${GITHUB_SHA::7}"
+          docker tag "$IMAGE:scan" "$IMAGE:latest"
+          docker push "$IMAGE:sha-${GITHUB_SHA::7}"
+          docker push "$IMAGE:latest"
 
   # =======================================================================
   # COMING LATER — placeholder jobs, intentionally not active yet.
