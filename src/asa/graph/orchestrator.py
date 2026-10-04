@@ -12,6 +12,7 @@ from asa.agents.diagnostic import diagnostic_node
 from asa.agents.planning import planning_node
 from asa.agents.rag import AgenticRAGAgent
 from asa.agents.request import request_node
+from asa.agents.safety import safety_node
 
 from asa.graph.routing import (
     route_after_planning,
@@ -127,26 +128,6 @@ def agentic_rag_node(
 
 
 # ---------------------------------------------------------------------------
-# Temporary specialist stubs
-# ---------------------------------------------------------------------------
-
-def safety_stub(
-    state: AgentState,
-) -> dict:
-    """Temporary Safety node used only to prove graph routing."""
-
-    print("\n[Safety Stub]")
-
-    return {
-        "current_step":
-            "safety",
-
-        "final_answer":
-            "ROUTED_TO_SAFETY",
-    }
-
-
-# ---------------------------------------------------------------------------
 # Graph
 # ---------------------------------------------------------------------------
 
@@ -188,7 +169,7 @@ def build_service_graph():
 
     graph.add_node(
         "safety",
-        safety_stub,
+        safety_node,
     )
 
     graph.add_edge(

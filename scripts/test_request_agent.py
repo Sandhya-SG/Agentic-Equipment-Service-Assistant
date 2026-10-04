@@ -151,6 +151,25 @@ TESTS = [
         "expected":
             "READY",
     },
+
+    {
+        "name":
+            "TEST 9 - POWERED PANEL ACCESS",
+
+        "state": {
+            "raw_query":
+                (
+                    "Can I open the panel while "
+                    "the equipment is powered?"
+                ),
+
+            "equipment_model":
+                THERMAL_STATION,
+        },
+
+        "expected":
+            "READY",
+    },
 ]
 
 

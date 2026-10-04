@@ -166,6 +166,8 @@ Examples that should be CLARIFY:
 
 "What should I do about this?"
 
+"Can I open the panel while the equipment is powered?"
+
 Important rules:
 
 1. Do not answer the engineer's question.
@@ -191,6 +193,27 @@ Important rules:
    protective device, or other safety mechanism,
    return READY even if the exact safety device is not
    identified.
+
+   Also return READY when the engineer asks whether a
+    specific physical action may be performed under a
+    specified equipment state or potentially hazardous
+    condition.
+
+    Examples include:
+    - opening a panel while the equipment is powered;
+    - accessing a protected area while equipment is
+    energized;
+    - servicing equipment without powering it off;
+    - continuing operation while a safety-related condition
+    is active.
+
+    The Request Agent does not need to determine whether the
+    action is safe. It only determines whether the request
+    is sufficiently clear for the Safety Agent to evaluate.
+
+    Do not ask which safety procedure or precaution the
+    engineer means when the requested action and equipment
+    condition are already clear.
 
 8. Also return READY when the request clearly describes
    an active safety-critical condition, such as an
