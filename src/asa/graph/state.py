@@ -15,16 +15,18 @@ from typing import Annotated, Literal, Optional, TypedDict
 # Supporting types                                                            #
 # --------------------------------------------------------------------------- #
 
+
 @dataclass
 class Chunk:
     """A retrieved passage with full provenance."""
+
     chunk_id: str
     doc_id: str
     section_id: str
     revision: str
     equipment_model: str
     text: str
-    score: float
+    score: float = 0.0
 
     # Citation / provenance metadata
     source_file: str = ""
@@ -35,6 +37,7 @@ class Chunk:
 @dataclass
 class RankedCause:
     """A candidate root cause, ranked by likelihood, tied to its evidence."""
+
     cause: str
     likelihood: float
     supporting_chunk_ids: list[str] = field(default_factory=list)
@@ -48,6 +51,7 @@ class Step:
     execution authority' guardrail at the type level. The system advises;
     the human acts.
     """
+
     order: int
     action: str
     supporting_chunk_ids: list[str] = field(default_factory=list)
@@ -57,6 +61,7 @@ class Step:
 @dataclass
 class Citation:
     """A user-facing citation pointing to the exact supporting text."""
+
     doc_id: str
     section_id: str
     revision: str
@@ -66,6 +71,7 @@ class Citation:
 @dataclass
 class TraceEvent:
     """One entry in the audit trail."""
+
     agent: str
     action: str
     timestamp: str
@@ -75,6 +81,7 @@ class TraceEvent:
 # --------------------------------------------------------------------------- #
 # The shared state                                                            #
 # --------------------------------------------------------------------------- #
+
 
 class AgentState(TypedDict, total=False):
     """The object passed node-to-node through the graph.
