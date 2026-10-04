@@ -95,11 +95,23 @@ class AgentState(TypedDict, total=False):
     intent: str
     equipment_model: Optional[str]
     symptoms: list[str]
+
+    request_status: Literal[
+        "READY",
+        "CLARIFY",
+    ]
+
     clarification_needed: bool
+    clarification_question: Optional[str]
+
+    clarification_response: Optional[str]
+    resolved_query: Optional[str]
+    clarification_count: int
 
     # --- Planning Agent writes ---
     plan: list[str]
     current_step: str
+    planning_reason: Optional[str]
     iteration_count: int
 
     # --- Agentic RAG Agent writes ---
@@ -142,26 +154,46 @@ MAX_RETRIES = 3
 CONFIDENCE_FLOOR = 0.70
 
 
-def new_state(raw_query: str) -> AgentState:
-    """Factory for a fresh state at the start of a run, with counters zeroed."""
+def new_state(
+    raw_query: str,
+    equipment_model: Optional[str] = None,
+) -> AgentState:
+    """Factory for a fresh state at the start of a run."""
+
     return AgentState(
         raw_query=raw_query,
+        equipment_model=equipment_model,
+
         symptoms=[],
+
         clarification_needed=False,
+        clarification_question=None,
+        clarification_response=None,
+        resolved_query=None,
+        clarification_count=0,
+
+        planning_reason=None,
+
         plan=[],
         iteration_count=0,
+
         retrieved_chunks=[],
         context_relevance=0.0,
         sufficiency=False,
         retry_count=0,
+
         root_causes=[],
         troubleshooting_steps=[],
+
         safety_verdict="allow",
         hazards=[],
         ppe_required=[],
+
         confidence=0.0,
         citations=[],
+
         escalated=False,
         terminate=False,
+
         trace=[],
     )
