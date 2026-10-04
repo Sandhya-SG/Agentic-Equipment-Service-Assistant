@@ -8,7 +8,7 @@
 .DS_Store
 **/.DS_Store
 
-# Built artifacts
+# Built / generated artifacts
 chroma_store/
 __pycache__/
 *.py[cod]
@@ -16,6 +16,9 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 
-# Real sponsor data — never commit. Synthetic data IS committed.
-corpus/aem/
+# Real sponsor data — never commit
+aem_documents/*
+!aem_documents/.gitkeep
+
+corpus/aem/*
 !corpus/aem/.gitkeep

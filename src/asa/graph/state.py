@@ -24,7 +24,12 @@ class Chunk:
     revision: str
     equipment_model: str
     text: str
-    score: float = 0.0
+    score: float
+
+    # Citation / provenance metadata
+    source_file: str = ""
+    page: int = 0
+    section_title: str = "Unknown"
 
 
 @dataclass
