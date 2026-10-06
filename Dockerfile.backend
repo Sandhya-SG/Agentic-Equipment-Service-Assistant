@@ -7,16 +7,35 @@ RUN apt-get update \
     && apt-get upgrade -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
+# CPU-only torch first, in its own layer: the default Linux wheel bundles CUDA and adds
+# gigabytes, and a separate layer keeps it cached when requirements change.
+# The pip cache mount keeps downloaded wheels on the build machine between builds (it is
+# not part of the image), so a changed requirements file only downloads what changed.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --index-url https://download.pytorch.org/whl/cpu torch
+
 COPY requirements-backend.txt .
 # setuptools and wheel are build tools the app does not need at runtime; removing
 # them also removes the vulnerable copies bundled with them.
-RUN pip install --no-cache-dir -r requirements-backend.txt \
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -r requirements-backend.txt \
     && pip uninstall -y setuptools wheel
+
+# Bake the public embedding model into the image so the container starts offline.
+ENV HF_HOME=/app/.cache/huggingface
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
 
 COPY app ./app
 COPY src/asa ./src/asa
 
 ENV PYTHONPATH=/app/src
+
+# Build the manual index into the image so it is self-contained (no host folder is
+# needed on ECS/Fargate). Rebuild the image whenever the manuals change.
+COPY aem_documents ./aem_documents
+COPY scripts/ingest.py ./scripts/ingest.py
+RUN python scripts/ingest.py \
+    && rm -rf aem_documents scripts
 
 EXPOSE 8000
 

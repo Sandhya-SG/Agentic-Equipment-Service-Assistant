@@ -26,3 +26,8 @@ ignore = [
 
 [tool.ruff.format]
 quote-style = "double"
+
+[tool.pytest.ini_options]
+markers = [
+    "openai: live test that calls the OpenAI API (costs money). Skipped unless --run-openai or RUN_OPENAI_TESTS=1.",
+]

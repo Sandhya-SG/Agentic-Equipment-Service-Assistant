@@ -1,3 +1,6 @@
+import logging
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -7,8 +10,22 @@ from app.routes.health import router as health_router
 from app.schemas.request import ChatRequest
 from app.schemas.response import ChatResponse
 from app.services.chat_service import handle_chat
+from app.services.graph_runner import warm_up
+from asa.ingestion.metadata import DOCUMENT_REGISTRY
+
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    # Load the embedding model and index now so the first request is not slow.
+    if not warm_up():
+        logger.warning("agents not ready: chat will answer 'unavailable' until the cause is fixed")
+    yield
+
 
 app = FastAPI(
+    lifespan=lifespan,
     title=settings.app_name,
     version="0.1.0",
     description="Starter backend for the AEM AI assistant.",
@@ -34,10 +51,16 @@ async def root():
     }
 
 
-# Plain `def` so FastAPI runs it in a threadpool: the model call blocks.
+@app.get("/api/equipment")
+async def equipment():
+    """Equipment the assistant has manuals for, for the UI's selector."""
+    return [{"id": d["equipment_model"], "label": d["title"]} for d in DOCUMENT_REGISTRY.values()]
+
+
+# Plain `def` so FastAPI runs it in a threadpool: the agent run blocks.
 @app.post("/api/chat", response_model=ChatResponse)
 def chat(request: ChatRequest):
-    result = handle_chat(request.message, request.conversation_id or "demo-session")
+    result = handle_chat(request.message, request.conversation_id or "demo-session", request.equipment_model)
     status_code = {"blocked": 400, "unavailable": 503}.get(result.status, 200)
     if status_code == 200:
         return result

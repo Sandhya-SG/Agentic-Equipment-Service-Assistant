@@ -20,10 +20,14 @@ def test_health_route():
 def test_chat_route(monkeypatch):
     import app.services.chat_service as chat_service
 
-    monkeypatch.setattr(chat_service, "generate_reply", lambda prompt: "hi there")
+    monkeypatch.setattr(
+        chat_service,
+        "run_graph",
+        lambda message, equipment_model: {"request_status": "READY", "final_answer": "hi there"},
+    )
     response = client.post(
         "/api/chat",
-        json={"message": "hello"},
+        json={"message": "hello", "equipment_model": "thermal_station"},
     )
     assert response.status_code == 200
     assert "response" in response.json()

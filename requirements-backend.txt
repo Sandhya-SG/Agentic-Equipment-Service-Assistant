@@ -1,3 +1,12 @@
 fastapi>=0.110.0
 uvicorn>=0.29.0
 pydantic>=2.6.0
+python-dotenv>=1.0.0
+openai>=1.40.0
+langgraph>=0.2.0
+langchain-core>=0.3.0
+chromadb>=0.5.0
+sentence-transformers>=3.0.0
+rank-bm25>=0.2.2
+# Imported by the retrieval path (embed.py -> chunk.py) as well as ingestion.
+PyMuPDF>=1.24.0
