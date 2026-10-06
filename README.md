@@ -1,20 +1,24 @@
 # Agentic Equipment Service Assistant (AEM)
 
-An AI assistant that helps technicians troubleshoot equipment. A Flask frontend sends questions to a FastAPI backend, which calls a local Ollama model.
+An AI assistant that helps technicians troubleshoot equipment. A Flask frontend sends questions to a FastAPI backend, which runs a LangGraph workflow of agents (request, planning, agentic RAG, diagnostic, safety). The agents answer only from the AEM equipment manuals and call OpenAI.
 
 ```
-Browser -> frontend (Flask, :5000) -> backend (FastAPI, :8000) -> Ollama (:11434)
+Browser -> frontend (Flask, :5000) -> backend (FastAPI, :8000) -> injection guard -> PII redaction -> LangGraph agents -> ChromaDB manual index + OpenAI -> safety check
 ```
 
 ## Prerequisites (everyone)
 
 1. **Python 3.11 or newer**
-2. **Ollama**, installed from https://ollama.com, with the model pulled:
+2. **An OpenAI API key**, set as `OPENAI_API_KEY` in `.env`. The agents call OpenAI, so questions that pass the input guard (with emails, card numbers and secrets redacted) are sent to it.
+3. **The manual index.** The sponsor PDFs live in `aem_documents/` (never committed). Build the ChromaDB index once, and again whenever the PDFs change:
    ```
-   ollama pull llama3.1
+   # PowerShell:  $env:PYTHONPATH = ".;src"      macOS / Linux:  export PYTHONPATH=.:src
+   python scripts/ingest.py
    ```
-   Ollama must be running (the desktop app or `ollama serve`). Check with `ollama list`.
-3. **Git**. Docker is only needed for option B.
+   This writes `chroma_store/` (gitignored) and downloads the embedding model on first run.
+4. **Git**. Docker is only needed for option B.
+
+Ollama is no longer needed. The old Ollama client is still in `app/services/llm_client.py` but the chat path does not use it.
 
 First-time setup for all options:
 
@@ -69,7 +73,7 @@ docker compose up --build
 
 Open http://localhost:5000. Stop with `Ctrl+C`, then `docker compose down`.
 
-The backend container reaches Ollama on your computer through `host.docker.internal`, so Ollama must be running on the host. To point at a different Ollama, set `DOCKER_OLLAMA_BASE_URL` in `.env`.
+The image builds its own manual index from `aem_documents/` and includes the embedding model, so it needs no host folders. Rebuild the image whenever the manuals change. Compose mounts `./logs` (the audit trail) and passes `OPENAI_API_KEY` from `.env`.
 
 ## Option C: run the published images
 
