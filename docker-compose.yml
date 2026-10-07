@@ -19,7 +19,9 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
-      LANGFUSE_HOST: ${LANGFUSE_HOST:-http://localhost:3000}
+      # Inside the container "localhost" is the container itself, so reach the host-side Langfuse by name.
+      LANGFUSE_HOST: ${DOCKER_LANGFUSE_HOST:-http://host.docker.internal:3000}
+      LANGFUSE_CAPTURE_CONTENT: ${LANGFUSE_CAPTURE_CONTENT:-false}
     volumes:
       # Audit trail, metrics and feedback survive container restarts.
       - ./logs:/app/logs

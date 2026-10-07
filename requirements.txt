@@ -14,3 +14,5 @@ pydantic>=2.6.0
 python-dotenv>=1.0.0
 pytest>=8.0.0
 ruff>=0.4.0
+langfuse>=4.0.0
+langchain>=1.0.0

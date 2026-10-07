@@ -10,3 +10,5 @@ sentence-transformers>=3.0.0
 rank-bm25>=0.2.2
 # Imported by the retrieval path (embed.py -> chunk.py) as well as ingestion.
 PyMuPDF>=1.24.0
+langfuse>=4.0.0
+langchain>=1.0.0

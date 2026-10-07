@@ -11,6 +11,7 @@ from app.schemas.request import ChatRequest
 from app.schemas.response import ChatResponse
 from app.services.chat_service import handle_chat
 from app.services.graph_runner import warm_up
+from asa.components.tracing import flush_tracing
 from asa.ingestion.metadata import DOCUMENT_REGISTRY
 
 logger = logging.getLogger(__name__)
@@ -22,6 +23,7 @@ async def lifespan(_: FastAPI):
     if not warm_up():
         logger.warning("agents not ready: chat will answer 'unavailable' until the cause is fixed")
     yield
+    flush_tracing()  # send any buffered traces before shutdown
 
 
 app = FastAPI(

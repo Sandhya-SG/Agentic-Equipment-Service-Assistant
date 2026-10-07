@@ -8,6 +8,7 @@ make the API (and its tests) depend on the index and an API key just to start.
 import logging
 from functools import lru_cache
 
+from asa.components.tracing import graph_config, instrument_openai
 from asa.graph.state import AgentState, new_state
 
 logger = logging.getLogger(__name__)
@@ -15,6 +16,8 @@ logger = logging.getLogger(__name__)
 
 @lru_cache(maxsize=1)
 def _graph():
+    # Must run before the agents are imported: they do `from openai import OpenAI`.
+    instrument_openai()
     from asa.graph.orchestrator import service_graph
 
     return service_graph
@@ -33,4 +36,4 @@ def warm_up() -> bool:
 
 def run_graph(message: str, equipment_model: str | None) -> AgentState:
     """Run request -> planning -> specialist and return the final shared state."""
-    return _graph().invoke(new_state(raw_query=message, equipment_model=equipment_model))
+    return _graph().invoke(new_state(raw_query=message, equipment_model=equipment_model), config=graph_config())

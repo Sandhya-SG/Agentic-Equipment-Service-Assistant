@@ -102,12 +102,46 @@ If a release misbehaves (errors, failing health check, unsafe or wrong answers),
 
 Never roll back to `latest`, because it always points at the newest build. Use the `sha-` tags, which never change.
 
+## Tracing with Langfuse (optional)
+
+Langfuse shows every request as a trace: the agent steps, each OpenAI call with its model, latency and token counts, and the outcome (status, escalated, hazard count, sources). It is optional: tracing is off unless both `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are in `.env`, and the app behaves the same without it.
+
+**Everyone uses their own local Langfuse and their own keys.** Do not share keys or a server: keys belong to a project, the secret key is shown only once, and traces from different people would mix.
+
+1. Generate your own key pair and paste both lines into `.env` (keep `LANGFUSE_HOST=http://localhost:3000`):
+   ```
+   python -c "import uuid; print('LANGFUSE_PUBLIC_KEY=pk-lf-' + str(uuid.uuid4())); print('LANGFUSE_SECRET_KEY=sk-lf-' + str(uuid.uuid4()))"
+   ```
+2. Start your own server (first start pulls several images and needs about 2 to 3 GB of RAM):
+   ```
+   docker compose -f docker-compose.langfuse.yml up -d      # UI at http://localhost:3000
+   docker compose -f docker-compose.langfuse.yml down       # stop (add -v to delete all trace data)
+   ```
+   On its first start it creates a project that uses exactly the keys in your `.env`. Sign in at http://localhost:3000 with `admin@aem.local` and `change-me-locally` (override with `LANGFUSE_ADMIN_EMAIL` and `LANGFUSE_ADMIN_PASSWORD`). The keys are only read when the database is first created: if you change them later, run `down -v` and start again.
+3. Start the app as usual and ask a question. The trace appears within seconds, tagged `run:<run_id>`, the same ID as the audit log and the API response.
+
+**What is traced:** the node-by-node LangGraph run, every OpenAI call with its token counts and latency, and scores for the outcome. The tracing code is `src/asa/components/tracing.py`; it is wired in at the API layer, so the agents themselves are not changed.
+
+**Privacy:** by default traces contain no question, answer or manual text, only structure, timing, tokens and scores. Set `LANGFUSE_CAPTURE_CONTENT=true` to also keep text; it is PII-redacted and truncated first. Tests never send traces, even if real keys are in `.env`.
+
+**Security:** the passwords in `docker-compose.langfuse.yml` are local defaults only, and every port is bound to `127.0.0.1`. Run it only on your own machine and never expose its ports. Never commit `.env`.
+
 ## Run the tests
 
 ```
 pip install -r requirements.txt
 pytest tests
 ```
+
+### Live OpenAI tests (on demand)
+
+`pytest tests` never calls OpenAI. Two live tests run real requests through the agents and cost a few cents, so they are skipped unless you ask:
+
+```
+pytest tests/live --run-openai              # or: RUN_OPENAI_TESTS=1 pytest tests/live
+```
+
+They need `OPENAI_API_KEY` in `.env` and the index built with `python scripts/ingest.py`; without them they skip themselves.
 
 ## CI and images
 

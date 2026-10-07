@@ -2,7 +2,7 @@ import os
 
 import pytest
 
-from asa.components import logging_sub
+from asa.components import logging_sub, tracing
 
 
 def pytest_addoption(parser):
@@ -22,6 +22,16 @@ def pytest_collection_modifyitems(config, items):
     for item in items:
         if "openai" in item.keywords:
             item.add_marker(skip)
+
+
+@pytest.fixture(autouse=True)
+def tracing_off(monkeypatch):
+    """Tests never send traces, even when real Langfuse keys are in .env."""
+    for name in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY", "LANGFUSE_CAPTURE_CONTENT"):
+        monkeypatch.delenv(name, raising=False)
+    tracing.reset_tracer()
+    yield
+    tracing.reset_tracer()
 
 
 @pytest.fixture(autouse=True)
