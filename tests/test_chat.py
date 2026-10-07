@@ -183,3 +183,10 @@ def test_equipment_endpoint_lists_supported_manuals():
     body = client.get("/api/equipment").json()
     assert {item["id"] for item in body} == {"thermal_station", "thermal_retrofit_1kw"}
     assert all(item["label"] for item in body)
+
+
+def test_chat_records_the_outcome_on_the_trace(graph, monkeypatch):
+    recorded = []
+    monkeypatch.setattr(chat_service, "record_outcome", lambda **kwargs: recorded.append(kwargs))
+    ask()
+    assert recorded == [{"status": "ok", "hazard_count": 0, "source_count": 1, "escalated": False}]

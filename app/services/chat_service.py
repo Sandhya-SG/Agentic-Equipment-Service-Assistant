@@ -14,6 +14,7 @@ import time
 from app.schemas.response import ChatResponse, SafetyInfo
 from app.services.graph_runner import run_graph
 from asa.components import logging_sub
+from asa.components.tracing import record_outcome, tag_run, trace_request
 from asa.guardrails.injection import scan_user_input
 from asa.guardrails.safety_rules import check_text
 
@@ -63,6 +64,19 @@ def _agent_status(state: dict) -> str:
 
 
 def handle_chat(message: str, conversation_id: str, equipment_model: str | None = None) -> ChatResponse:
+    """Run one chat request inside a Langfuse trace (a no-op when tracing is off)."""
+    with trace_request(session_id=conversation_id, equipment_model=equipment_model):
+        response = _handle_chat(message, conversation_id, equipment_model)
+        record_outcome(
+            status=response.status,
+            hazard_count=len(response.safety.hazards),
+            source_count=len(response.sources),
+            escalated=response.status in ("escalated", "halted"),
+        )
+        return response
+
+
+def _handle_chat(message: str, conversation_id: str, equipment_model: str | None = None) -> ChatResponse:
     started = time.monotonic()
 
     scan = scan_user_input(message)
@@ -81,7 +95,8 @@ def handle_chat(message: str, conversation_id: str, equipment_model: str | None 
     run_id = logging_sub.start_run(safe_message)
 
     try:
-        state = run_graph(safe_message, equipment_model)
+        with tag_run(run_id):
+            state = run_graph(safe_message, equipment_model)
     except Exception as exc:
         # OpenAI error, missing index, bad key... Never leak details to the user.
         logger.error("chat failed: run_id=%s error=%s: %s", run_id, type(exc).__name__, exc)
