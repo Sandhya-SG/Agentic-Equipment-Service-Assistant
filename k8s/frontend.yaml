@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: aem
+  labels: {app: frontend, app.kubernetes.io/part-of: aem-service-assistant}
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app: frontend}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxSurge: 1, maxUnavailable: 0}
+  template:
+    metadata:
+      labels: {app: frontend}
+    spec:
+      # Kubernetes would inject FRONTEND_PORT=tcp://... and BACKEND_PORT=tcp://... for the Services
+      # named frontend and backend, which collide with this app's own settings.
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      terminationGracePeriodSeconds: 160         # finish requests waiting on the backend
+      containers:
+        - name: frontend
+          image: aem-frontend:k8s
+          imagePullPolicy: IfNotPresent
+          ports:
+            - {name: http, containerPort: 5000}
+          envFrom:
+            - configMapRef: {name: aem-config}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {memory: 256Mi}
+          readinessProbe:
+            httpGet: {path: /, port: http}
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /, port: http}
+            periodSeconds: 20
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}         # gunicorn's worker heartbeat files
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: aem
+  labels: {app: frontend}
+spec:
+  type: ClusterIP
+  selector: {app: frontend}
+  ports:
+    - {name: http, port: 5000, targetPort: http}

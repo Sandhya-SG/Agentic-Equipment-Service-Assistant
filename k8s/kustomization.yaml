@@ -1,0 +1,10 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: aem
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - backend.yaml
+  - frontend.yaml
+# The Secret (aem-secrets) is created separately by scripts/k8s_secret.py so no key is in git.
+# hpa.yaml is applied after metrics-server is installed (see k8s/README.md).

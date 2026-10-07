@@ -31,3 +31,28 @@ def test_chat_route(monkeypatch):
     )
     assert response.status_code == 200
     assert "response" in response.json()
+
+
+def test_ready_is_503_until_the_agents_have_loaded(monkeypatch):
+    import app.routes.health as health
+
+    monkeypatch.setattr(health, "is_ready", lambda: False)
+    response = client.get("/ready")
+    assert response.status_code == 503
+    assert response.json()["status"] == "not ready"
+
+
+def test_ready_is_200_once_the_agents_have_loaded(monkeypatch):
+    import app.routes.health as health
+
+    monkeypatch.setattr(health, "is_ready", lambda: True)
+    response = client.get("/ready")
+    assert response.status_code == 200
+    assert response.json()["status"] == "ready"
+
+
+def test_health_stays_ok_even_when_not_ready(monkeypatch):
+    import app.routes.health as health
+
+    monkeypatch.setattr(health, "is_ready", lambda: False)
+    assert client.get("/health").status_code == 200

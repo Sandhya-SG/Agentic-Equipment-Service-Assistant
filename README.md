@@ -65,15 +65,45 @@ Open http://localhost:5000. The backend health check is http://localhost:8000/he
 
 ## Option B: run with Docker Compose
 
-Best for checking that the containers work. Compose builds the images from the Dockerfiles on your machine, so nothing needs to be downloaded from a registry.
+Best for checking that the containers work. Compose builds the images on your machine from the Dockerfiles, so no private registry or login is needed. The build does download the Python base image, the Python packages and the embedding model from the internet, so the **first build takes several minutes** (roughly 3 to 5 minutes on a fast connection, longer on a slow one) and the backend image is about 2.9 GB. Later builds take seconds if the dependencies did not change.
+
+You need Docker Desktop running and an `OPENAI_API_KEY` in your `.env` (`cp .env.example .env`, then set the key).
 
 ```
 docker compose up --build
 ```
 
-Open http://localhost:5000. Stop with `Ctrl+C`, then `docker compose down`.
+Open http://localhost:5000. Stop with `Ctrl+C`, then `docker compose down`. To run it in the background, use `docker compose up --build -d` and look at the logs with `docker compose logs -f backend`.
 
-The image builds its own manual index from `aem_documents/` and includes the embedding model, so it needs no host folders. Rebuild the image whenever the manuals change. Compose mounts `./logs` (the audit trail) and passes `OPENAI_API_KEY` from `.env`.
+The image builds its own manual index from `aem_documents/` and includes the embedding model, so it needs no host folders. Rebuild the image whenever the manuals change. Compose mounts `./logs` (the audit trail) and passes `OPENAI_API_KEY` from `.env`. The backend uses about 0.5 GB of memory when idle, so a Docker Desktop memory limit of 4 GB or more is comfortable.
+
+**Troubleshooting**
+- **`docker : The term 'docker' is not recognized` (Windows):** the Docker folder is not on your PATH. Start Docker Desktop first, then use one of these fixes.
+
+  *Quick fix (this terminal only):*
+
+  ```powershell
+  $env:Path = "$env:LOCALAPPDATA\Programs\DockerDesktop\resources\bin;" + $env:Path
+  docker --version
+  ```
+
+  Then run `docker compose up --build` in the same window. You need to repeat this line in each new terminal.
+
+  *Permanent fix (all future terminals):*
+
+  ```powershell
+  $p = [Environment]::GetEnvironmentVariable("Path", "User")
+  [Environment]::SetEnvironmentVariable("Path", "$p;$env:LOCALAPPDATA\Programs\DockerDesktop\resources\bin", "User")
+  ```
+
+  Then close VS Code completely and reopen it. A new window of the same VS Code is not enough, because it only reads PATH when it starts. After that, `docker --version` should work anywhere.
+
+  If it is still not found, check that the folder exists: `Test-Path "$env:LOCALAPPDATA\Programs\DockerDesktop\resources\bin\docker.exe"`. If it says `False`, Docker Desktop may be installed elsewhere (for example `C:\Program Files\Docker\Docker\resources\bin`): use that folder in the commands above.
+- **Frontend log shows `Control server error: [Errno 13] Permission denied: '/home/app'`:** this is harmless (the frontend still works) and comes from an older frontend image. Gunicorn 26 tries to open a control socket in the user's home folder, and the non-root container user has none. The current `Dockerfile.frontend` switches it off with `--no-control-socket`. Pull the latest code and rebuild with `docker compose up --build` (add `--no-cache` if the old image is reused). The log should then show only `INFO` lines.
+- **Cannot connect to the Docker daemon:** start Docker Desktop and wait until it says it is running.
+- **Port 8000 or 5000 already in use:** stop the other program (for example a local `uvicorn` or `flask`), or run `docker compose down`.
+- **Every answer says "temporarily unavailable":** check that `OPENAI_API_KEY` is set in `.env`, then `docker compose logs backend`.
+- **Linux only, audit log not written:** the container runs as user 10001; make sure `./logs` is writable (`mkdir -p logs && chmod 777 logs`) before the first run.
 
 ## Option C: run the published images
 
@@ -85,6 +115,10 @@ docker pull ghcr.io/sandhya-sg/asa-frontend:latest
 ```
 
 Every image is also tagged `sha-<first 7 characters of the commit>`. **To roll back, redeploy the earlier `sha-` tag.** If the pull is denied, run `docker login ghcr.io` with a GitHub token that has `read:packages`, or ask the maintainer to make the packages visible to the team.
+
+## Option D: run on Kubernetes (local cluster)
+
+Best for showing scaling and self-healing. The manifests are in `k8s/` and run the backend and frontend as two replicas each on a local cluster (Docker Desktop with the kind provisioner, or minikube). Build the images, create the secret from your `.env` with `python scripts/k8s_secret.py`, then `kubectl apply -k k8s`. See `k8s/README.md` for the full steps, how to scale, and the design notes (probes, one audit file per pod, non-root containers).
 
 ## Rollback
 

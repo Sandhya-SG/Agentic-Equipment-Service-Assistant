@@ -25,7 +25,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import socket
+import threading
 import uuid
 from dataclasses import asdict
 from datetime import datetime, timezone
@@ -100,6 +103,33 @@ def _last_hash(path: Path) -> str:
         return ""
 
 
+# Appends are serialised, and the last hash is cached per file, so concurrent requests
+# (FastAPI runs the chat route in a thread pool) cannot both chain to the same previous
+# record, and each record no longer re-reads the whole log.
+_APPEND_LOCK = threading.Lock()
+_LAST_HASH: dict[str, tuple[str, int]] = {}  # path -> (last hash, file size when cached)
+
+
+def _per_instance() -> bool:
+    return os.getenv("AUDIT_LOG_PER_INSTANCE", "false").lower() == "true"
+
+
+def _instance_path(path: Path) -> Path:
+    """With AUDIT_LOG_PER_INSTANCE=true each replica (pod) writes its own chain file, because
+    several processes appending to one hash chain would corrupt it."""
+    if not _per_instance():
+        return path
+    instance = os.getenv("HOSTNAME") or socket.gethostname()
+    return path.with_name(f"{path.stem}-{instance}{path.suffix}")
+
+
+def _log_files(path: Path) -> list[Path]:
+    """The log itself plus any per-instance files written by other replicas."""
+    files = [path] if path.exists() else []
+    files += sorted(path.parent.glob(f"{path.stem}-*{path.suffix}")) if path.parent.exists() else []
+    return files
+
+
 def _append(path: Path, record: dict) -> bool:
     """Append a redacted, hash-chained record. Never raises — returns success bool.
 
@@ -108,14 +138,21 @@ def _append(path: Path, record: dict) -> bool:
     tampering detectable.
     """
     try:
+        path = _instance_path(path)
         LOG_DIR.mkdir(parents=True, exist_ok=True)
         clean = _redact(record)
-        prev = _last_hash(path)
-        payload = json.dumps(clean, sort_keys=True, default=str)
-        clean["_prev"] = prev
-        clean["_hash"] = hashlib.sha256((prev + payload).encode("utf-8")).hexdigest()
-        with path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(clean, default=str) + "\n")
+        with _APPEND_LOCK:
+            key = str(path)
+            size = path.stat().st_size if path.exists() else 0
+            cached = _LAST_HASH.get(key)
+            # Trust the cache only if the file has not changed since we last wrote it.
+            prev = cached[0] if cached and cached[1] == size else _last_hash(path)
+            payload = json.dumps(clean, sort_keys=True, default=str)
+            clean["_prev"] = prev
+            clean["_hash"] = hashlib.sha256((prev + payload).encode("utf-8")).hexdigest()
+            with path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(clean, default=str) + "\n")
+            _LAST_HASH[key] = (clean["_hash"], path.stat().st_size)
         return True
     except Exception as exc:  # logging must never break the pipeline
         # Last-resort: print to stderr, but do not propagate.
@@ -209,7 +246,7 @@ def emit_metrics(run_id: str, final_state: dict, latency_s: float) -> dict:
 # --------------------------------------------------------------------------- #
 
 
-def _read(path: Path) -> list[dict]:
+def _read_file(path: Path) -> list[dict]:
     if not path.exists():
         return []
     out = []
@@ -220,6 +257,14 @@ def _read(path: Path) -> list[dict]:
                     out.append(json.loads(line))
                 except json.JSONDecodeError:
                     continue
+    return out
+
+
+def _read(path: Path) -> list[dict]:
+    """All records of a log, including the per-instance files of other replicas."""
+    out: list[dict] = []
+    for file in _log_files(path):
+        out.extend(_read_file(file))
     return out
 
 
@@ -247,13 +292,8 @@ def monitoring_summary() -> dict:
     }
 
 
-def verify_audit_integrity() -> dict:
-    """Re-walk the audit log and confirm the hash chain is intact.
-
-    Returns {'intact': bool, 'checked': int, 'broken_at': index|None}. A broken
-    chain means a record was altered or removed after being written.
-    """
-    records = _read(AUDIT_LOG)
+def _verify_chain(records: list[dict]) -> int | None:
+    """Return the index of the first broken record, or None if the chain is intact."""
     prev = ""
     for i, rec in enumerate(records):
         stored_hash = rec.get("_hash", "")
@@ -264,6 +304,31 @@ def verify_audit_integrity() -> dict:
         payload = json.dumps(recomputed, sort_keys=True, default=str)
         expected = hashlib.sha256((prev + payload).encode("utf-8")).hexdigest()
         if stored_prev != prev or stored_hash != expected:
-            return {"intact": False, "checked": i, "broken_at": i}
+            return i
         prev = stored_hash
-    return {"intact": True, "checked": len(records), "broken_at": None}
+    return None
+
+
+def verify_audit_integrity() -> dict:
+    """Re-walk the audit log and confirm the hash chain is intact.
+
+    Each file (the main log and one per replica) is its own chain. Returns
+    {'intact': bool, 'checked': int, 'broken_at': index|None, 'files': int,
+    'broken_file': name|None}. A broken chain means a record was altered or removed after
+    being written.
+    """
+    checked = 0
+    files = _log_files(AUDIT_LOG)
+    for file in files:
+        records = _read_file(file)
+        broken = _verify_chain(records)
+        if broken is not None:
+            return {
+                "intact": False,
+                "checked": checked + broken,
+                "broken_at": broken,
+                "files": len(files),
+                "broken_file": file.name,
+            }
+        checked += len(records)
+    return {"intact": True, "checked": checked, "broken_at": None, "files": len(files), "broken_file": None}

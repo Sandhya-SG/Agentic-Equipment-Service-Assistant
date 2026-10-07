@@ -1,0 +1,29 @@
+# Horizontal Pod Autoscaler for the backend. Needs metrics-server (see k8s/README.md).
+#
+# Note: in real use the backend mostly waits on OpenAI, so CPU stays low and rate limits cap
+# throughput before CPU does. CPU is still the standard signal and is what the load test (with a
+# stubbed model) drives, so it is used here. A production setup would also scale on request
+# concurrency or latency.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: backend
+  namespace: aem
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: backend
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: {type: Utilization, averageUtilization: 60}
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies: [{type: Pods, value: 2, periodSeconds: 30}]
+    scaleDown:
+      stabilizationWindowSeconds: 120           # avoid flapping, and let slow requests finish

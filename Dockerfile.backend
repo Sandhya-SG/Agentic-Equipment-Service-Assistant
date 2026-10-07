@@ -37,6 +37,12 @@ COPY scripts/ingest.py ./scripts/ingest.py
 RUN python scripts/ingest.py \
     && rm -rf aem_documents scripts
 
+# Run as a non-root user. A numeric UID lets Kubernetes verify runAsNonRoot. The app
+# writes the audit log (/app/logs) and the Chroma index (/app/chroma_store), so it owns /app.
+RUN useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin app \
+    && chown -R 10001:10001 /app
+USER 10001
+
 EXPOSE 8000
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

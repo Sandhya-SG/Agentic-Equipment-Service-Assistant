@@ -1,0 +1,81 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: aem
+  labels: {app: backend, app.kubernetes.io/part-of: aem-service-assistant}
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app: backend}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxSurge: 1, maxUnavailable: 0}   # never drop below the desired ready pods
+  template:
+    metadata:
+      labels: {app: backend}
+    spec:
+      # Kubernetes would inject FRONTEND_PORT=tcp://... and BACKEND_PORT=tcp://... for the Services
+      # named frontend and backend, which collide with this app's own settings.
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      terminationGracePeriodSeconds: 60          # let in-flight (slow) agent requests finish
+      containers:
+        - name: backend
+          image: aem-backend:k8s
+          imagePullPolicy: IfNotPresent           # local image; use a registry tag in a real cluster
+          ports:
+            - {name: http, containerPort: 8000}
+          envFrom:
+            - configMapRef: {name: aem-config}
+          env:
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef: {name: aem-secrets, key: OPENAI_API_KEY}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: ["ALL"]}
+          resources:
+            requests: {cpu: 250m, memory: 1Gi}
+            limits: {memory: 3Gi}
+          # Loading torch, the embedding model and the index takes a while: allow up to ~200 s,
+          # and restart the container if it never becomes ready.
+          startupProbe:
+            httpGet: {path: /ready, port: http}
+            periodSeconds: 5
+            failureThreshold: 40
+          readinessProbe:                          # only ready pods receive traffic
+            httpGet: {path: /ready, port: http}
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 2
+          livenessProbe:                           # restart a hung process
+            httpGet: {path: /health, port: http}
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          volumeMounts:
+            - {name: logs, mountPath: /app/logs}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        # Demo: audit logs live as long as the pod. A real deployment ships them to a durable store.
+        - name: logs
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: aem
+  labels: {app: backend}
+spec:
+  type: ClusterIP
+  selector: {app: backend}
+  ports:
+    - {name: http, port: 8000, targetPort: http}

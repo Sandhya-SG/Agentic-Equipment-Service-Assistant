@@ -23,6 +23,11 @@ def _graph():
     return service_graph
 
 
+def is_ready() -> bool:
+    """True once the agents are loaded (the graph was built successfully)."""
+    return _graph.cache_info().currsize > 0
+
+
 def warm_up() -> bool:
     """Build the graph now so the first user request is not slow. Never raises."""
     try:
