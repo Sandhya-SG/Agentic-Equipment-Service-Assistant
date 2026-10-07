@@ -10,13 +10,8 @@ Browser -> frontend (Flask, :5000) -> backend (FastAPI, :8000) -> injection guar
 
 1. **Python 3.11 or newer**
 2. **An OpenAI API key**, set as `OPENAI_API_KEY` in `.env`. The agents call OpenAI, so questions that pass the input guard (with emails, card numbers and secrets redacted) are sent to it.
-3. **The manual index.** The sponsor PDFs live in `aem_documents/` (never committed). Build the ChromaDB index once, and again whenever the PDFs change:
-   ```
-   # PowerShell:  $env:PYTHONPATH = ".;src"      macOS / Linux:  export PYTHONPATH=.:src
-   python scripts/ingest.py
-   ```
-   This writes `chroma_store/` (gitignored) and downloads the embedding model on first run.
-4. **Git**. Docker is only needed for option B.
+3. **The manual index.** The sponsor PDFs live in `aem_documents/`. For Option A you build the ChromaDB index once yourself (step 6 of Option A, after the packages are installed), and again whenever the PDFs change. The Docker options build it into the image.
+4. **Git**. **Docker is optional**: it is only needed for Options B to D. Option A (two terminals, plain Python) needs no Docker at all and is the recommended way to work day to day.
 
 Ollama is no longer needed. The old Ollama client is still in `app/services/llm_client.py` but the chat path does not use it.
 
@@ -32,48 +27,121 @@ cp .env.example .env        # Windows PowerShell: Copy-Item .env.example .env
 
 ## Option A: run locally with Python (no Docker)
 
-Best for day-to-day development.
+Best for day-to-day development. No Docker needed. Python 3.11 or 3.12 is what CI tests (newer versions also ran locally). Do the steps in this order, from the repository root, after the first-time setup above (clone and `.env` with your `OPENAI_API_KEY`).
+
+**1. Check that Python is installed.** You need version 3.11 or newer:
 
 ```
-python -m venv .venv
-# Windows PowerShell:  .\.venv\Scripts\Activate.ps1
-# macOS / Linux:       source .venv/bin/activate
+# Windows:         python --version        (if that fails, try:  py --version)
+# macOS / Linux:   python3 --version
+```
 
+If the command is not found, install Python from https://www.python.org/downloads/ and, on Windows, tick **"Add python.exe to PATH"** in the installer. Then open a new terminal.
+
+**2. Create the virtual environment (once per clone).** A virtual environment is a private folder, here called `.venv`, that holds this project's Python packages, so they do not clash with other projects on your computer. Run this in the repository root, the folder that contains `README.md`:
+
+```
+# Windows:         python -m venv .venv        (or, to pick a version:  py -3.12 -m venv .venv)
+# macOS / Linux:   python3 -m venv .venv
+```
+
+It takes a few seconds and creates the `.venv` folder (it is ignored by git, so it is never committed).
+
+**3. Activate it (in every new terminal).** Creating the environment does not switch it on; activating does:
+
+```
+# Windows PowerShell:       .\.venv\Scripts\Activate.ps1
+# Windows Command Prompt:   .venv\Scripts\activate.bat
+# macOS / Linux:            source .venv/bin/activate
+```
+
+You should see `(.venv)` at the start of the prompt. To check, `python -c "import sys; print(sys.prefix)"` should print a path that ends in `.venv`.
+
+- **PowerShell says "running scripts is disabled on this system":** run `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` (it only affects that window) and activate again, or use Command Prompt instead.
+- **VS Code:** press `Ctrl+Shift+P`, choose **Python: Select Interpreter** and pick the one inside `.venv`, so the editor and its terminals use it.
+- **Leave it** with `deactivate`. **Start over** by deleting the `.venv` folder and repeating steps 2 and 3.
+
+**4. Install the packages (once, and again if `requirements.txt` changes).** The first install downloads PyTorch and takes a few minutes:
+
+```
 pip install -r requirements.txt
 ```
 
-Set the import path so the `app` and `asa` packages are found:
+On Linux, to avoid the large GPU build of PyTorch, run `pip install torch --index-url https://download.pytorch.org/whl/cpu` first. If `pip` is not found, use `python -m pip install -r requirements.txt`.
+
+**5. Set the import path** so the `app` and `asa` packages are found (repeat in every new terminal):
 
 ```
-# Windows PowerShell:  $env:PYTHONPATH = ".;src"
-# macOS / Linux:       export PYTHONPATH=.:src
+# Windows PowerShell:       $env:PYTHONPATH = ".;src"
+# Windows Command Prompt:   set PYTHONPATH=.;src
+# macOS / Linux:            export PYTHONPATH=.:src
 ```
 
-Start the backend in one terminal:
+> **Every new terminal needs three things:** be in the repository root, activate the virtual environment (step 3), and set `PYTHONPATH` (step 5). The installation (step 4) and the index (next step) are done only once.
+
+**6. Build the manual index** once, and again whenever the PDFs in `aem_documents/` change. This writes `chroma_store/` (gitignored) and downloads the embedding model on the first run:
+
+```
+python scripts/ingest.py
+```
+
+**7. Start the backend** in the first terminal and wait until it prints "Application startup complete" (loading the agents takes a few seconds):
 
 ```
 uvicorn app.main:app --reload --port 8000
 ```
 
-Start the frontend in a second terminal (activate the venv and set `PYTHONPATH` there too):
+**8. Start the frontend** in a second terminal (activate the venv and set `PYTHONPATH` there too):
 
 ```
 flask --app frontend.app run --port 5000
 ```
 
-Open http://localhost:5000. The backend health check is http://localhost:8000/health.
+**9. Use it.** Open http://localhost:5000, choose the equipment and ask a question. The backend health check is http://localhost:8000/health and readiness is http://localhost:8000/ready (503 until the agents have loaded). Stop each server with `Ctrl+C`.
+
+If answers say "temporarily unavailable", check that `OPENAI_API_KEY` is set in `.env`, that step 6 was done (`chroma_store/` exists), and read the backend terminal for the error.
 
 ## Option B: run with Docker Compose
 
-Best for checking that the containers work. Compose builds the images from the Dockerfiles on your machine, so nothing needs to be downloaded from a registry.
+Best for checking that the containers work. Compose builds the images on your machine from the Dockerfiles, so no private registry or login is needed. The build does download the Python base image, the Python packages and the embedding model from the internet, so the **first build takes several minutes** (roughly 3 to 5 minutes on a fast connection, longer on a slow one) and the backend image is about 2.9 GB. Later builds take seconds if the dependencies did not change.
+
+You need Docker Desktop running and an `OPENAI_API_KEY` in your `.env` (`cp .env.example .env`, then set the key).
 
 ```
 docker compose up --build
 ```
 
-Open http://localhost:5000. Stop with `Ctrl+C`, then `docker compose down`.
+Open http://localhost:5000. Stop with `Ctrl+C`, then `docker compose down`. To run it in the background, use `docker compose up --build -d` and look at the logs with `docker compose logs -f backend`.
 
-The image builds its own manual index from `aem_documents/` and includes the embedding model, so it needs no host folders. Rebuild the image whenever the manuals change. Compose mounts `./logs` (the audit trail) and passes `OPENAI_API_KEY` from `.env`.
+The image builds its own manual index from `aem_documents/` and includes the embedding model, so it needs no host folders. Rebuild the image whenever the manuals change. Compose mounts `./logs` (the audit trail) and passes `OPENAI_API_KEY` from `.env`. The backend uses about 0.5 GB of memory when idle, so a Docker Desktop memory limit of 4 GB or more is comfortable.
+
+**Troubleshooting**
+- **`docker : The term 'docker' is not recognized` (Windows):** the Docker folder is not on your PATH. Start Docker Desktop first, then use one of these fixes.
+
+  *Quick fix (this terminal only):*
+
+  ```powershell
+  $env:Path = "$env:LOCALAPPDATA\Programs\DockerDesktop\resources\bin;" + $env:Path
+  docker --version
+  ```
+
+  Then run `docker compose up --build` in the same window. You need to repeat this line in each new terminal.
+
+  *Permanent fix (all future terminals):*
+
+  ```powershell
+  $p = [Environment]::GetEnvironmentVariable("Path", "User")
+  [Environment]::SetEnvironmentVariable("Path", "$p;$env:LOCALAPPDATA\Programs\DockerDesktop\resources\bin", "User")
+  ```
+
+  Then close VS Code completely and reopen it. A new window of the same VS Code is not enough, because it only reads PATH when it starts. After that, `docker --version` should work anywhere.
+
+  If it is still not found, check that the folder exists: `Test-Path "$env:LOCALAPPDATA\Programs\DockerDesktop\resources\bin\docker.exe"`. If it says `False`, Docker Desktop may be installed elsewhere (for example `C:\Program Files\Docker\Docker\resources\bin`): use that folder in the commands above.
+- **Frontend log shows `Control server error: [Errno 13] Permission denied: '/home/app'`:** this is harmless (the frontend still works) and comes from an older frontend image. Gunicorn 26 tries to open a control socket in the user's home folder, and the non-root container user has none. The current `Dockerfile.frontend` switches it off with `--no-control-socket`. Pull the latest code and rebuild with `docker compose up --build` (add `--no-cache` if the old image is reused). The log should then show only `INFO` lines.
+- **Cannot connect to the Docker daemon:** start Docker Desktop and wait until it says it is running.
+- **Port 8000 or 5000 already in use:** stop the other program (for example a local `uvicorn` or `flask`), or run `docker compose down`.
+- **Every answer says "temporarily unavailable":** check that `OPENAI_API_KEY` is set in `.env`, then `docker compose logs backend`.
+- **Linux only, audit log not written:** the container runs as user 10001; make sure `./logs` is writable (`mkdir -p logs && chmod 777 logs`) before the first run.
 
 ## Option C: run the published images
 
@@ -85,6 +153,10 @@ docker pull ghcr.io/sandhya-sg/asa-frontend:latest
 ```
 
 Every image is also tagged `sha-<first 7 characters of the commit>`. **To roll back, redeploy the earlier `sha-` tag.** If the pull is denied, run `docker login ghcr.io` with a GitHub token that has `read:packages`, or ask the maintainer to make the packages visible to the team.
+
+## Option D: run on Kubernetes (local cluster)
+
+Best for showing scaling and self-healing. The manifests are in `k8s/` and run the backend and frontend as two replicas each on a local cluster (Docker Desktop with the kind provisioner, or minikube). Build the images, create the secret from your `.env` with `python scripts/k8s_secret.py`, then `kubectl apply -k k8s`. See `k8s/README.md` for the full steps, how to scale, and the design notes (probes, one audit file per pod, non-root containers).
 
 ## Rollback
 

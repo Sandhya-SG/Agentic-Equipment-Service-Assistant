@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aem-config
+  namespace: aem
+data:
+  ENVIRONMENT: "kubernetes"
+  BACKEND_HOST: "0.0.0.0"
+  BACKEND_PORT: "8000"
+  # Each replica writes its own hash-chained audit file (named after the pod), because several
+  # pods appending to one chain would corrupt it.
+  AUDIT_LOG_PER_INSTANCE: "true"
+  # The frontend reaches the backend through its Service name.
+  BACKEND_URL: "http://backend:8000"
+  BACKEND_TIMEOUT: "120"
