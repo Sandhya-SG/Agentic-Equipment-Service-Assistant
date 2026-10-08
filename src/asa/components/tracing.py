@@ -202,7 +202,14 @@ def _close(entered: list, exc_type, exc) -> None:
             logger.warning("Langfuse trace not closed cleanly: %s", type(err).__name__)
 
 
-def record_outcome(*, status: str, hazard_count: int = 0, source_count: int = 0, escalated: bool = False) -> None:
+def record_outcome(
+    *,
+    status: str,
+    hazard_count: int = 0,
+    source_count: int = 0,
+    escalated: bool = False,
+    confidence: float | None = None,
+) -> None:
     """Attach the outcome to the current trace as scores (structured data, never text)."""
     client = get_tracer()
     if client is None:
@@ -212,6 +219,8 @@ def record_outcome(*, status: str, hazard_count: int = 0, source_count: int = 0,
         client.score_current_trace(name="escalated", value=1 if escalated else 0, data_type="BOOLEAN")
         client.score_current_trace(name="hazard_count", value=hazard_count, data_type="NUMERIC")
         client.score_current_trace(name="source_count", value=source_count, data_type="NUMERIC")
+        if confidence:
+            client.score_current_trace(name="confidence", value=float(confidence), data_type="NUMERIC")
     except Exception as exc:
         logger.warning("Langfuse outcome not recorded: %s", type(exc).__name__)
 
