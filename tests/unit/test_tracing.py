@@ -135,14 +135,14 @@ def test_run_graph_passes_the_tracing_config_to_the_graph(monkeypatch):
     calls = []
 
     class FakeGraph:
-        def invoke(self, state, config=None):
-            calls.append((state["raw_query"], config))
-            return {"final_answer": "ok"}
+        def stream(self, state, config=None, stream_mode=None):
+            calls.append((state["raw_query"], config, stream_mode))
+            yield "values", {"final_answer": "ok"}
 
     monkeypatch.setattr(graph_runner, "_graph", lambda: FakeGraph())
     monkeypatch.setattr(graph_runner, "graph_config", lambda: {"callbacks": ["handler"]})
     graph_runner.run_graph("question", "thermal_station")
-    assert calls == [("question", {"callbacks": ["handler"]})]
+    assert calls == [("question", {"callbacks": ["handler"]}, ["updates", "values"])]
 
 
 def _chunk():

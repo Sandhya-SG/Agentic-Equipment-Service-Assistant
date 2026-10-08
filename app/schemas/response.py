@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -18,6 +18,16 @@ class SafetyInfo(BaseModel):
     warning: str | None = None
 
 
+class TraceStep(BaseModel):
+    """One agent that ran for this request, in order (the "visible orchestration trace")."""
+
+    agent: str = Field(description="Graph node: request, planning, agentic_rag, diagnostic or safety")
+    duration_ms: int = 0
+    detail: dict[str, str | int | float | bool] = Field(
+        default_factory=dict, description="Short categorical values only, never text"
+    )
+
+
 class ChatResponse(BaseModel):
     response: str
     conversation_id: str
@@ -28,3 +38,7 @@ class ChatResponse(BaseModel):
     specialist: str | None = Field(default=None, description="Agent that handled the request")
     escalation_reason: str | None = None
     run_id: str | None = Field(default=None, description="Audit-trail correlation id")
+    trace: list[TraceStep] = Field(default_factory=list, description="Which agents ran, in order, with durations")
+    explanation: dict[str, Any] | None = Field(
+        default=None, description="From the Explainability layer when it exists: confidence, citations, reasons"
+    )

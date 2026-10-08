@@ -192,3 +192,168 @@ def test_monitoring_summary_reads_the_metrics_of_every_replica(monkeypatch):
     monkeypatch.setenv("HOSTNAME", "pod-b")
     L.emit_metrics("run-b", state, 2.0)
     assert L.monitoring_summary()["runs"] == 2
+
+
+# --------------------------------------------------------------------------- #
+# Provenance, blocked requests, monitoring rates and alerts                   #
+# --------------------------------------------------------------------------- #
+
+
+def _metrics(
+    status="ok", confidence=0.0, latency=1.0, escalated=False, explained=False, sources=1, equipment="thermal_station"
+):
+    run_id = L.start_run("q")
+    L.emit_metrics(
+        run_id,
+        {
+            "status": status,
+            "confidence": confidence,
+            "escalated": escalated,
+            "explained": explained,
+            "source_count": sources,
+            "equipment_model": equipment,
+        },
+        latency,
+    )
+    return run_id
+
+
+def test_log_blocked_records_categories_and_length_but_not_the_text():
+    run_id = L.log_blocked("sess-1", ["prompt_leak", "instruction_override"], 61)
+    records = [r for r in L._read(L.AUDIT_LOG) if r["run_id"] == run_id]
+    assert [r["type"] for r in records] == ["run_start", "run_end"]
+    end = records[1]
+    assert end["status"] == "blocked"
+    assert end["blocked_categories"] == ["instruction_override", "prompt_leak"]
+    assert end["input_length"] == 61
+    assert records[0]["query"] == "[withheld: blocked input]"
+    assert L.verify_audit_integrity()["intact"] is True
+
+
+def test_end_run_records_the_full_provenance_fields():
+    run_id = L.start_run("q")
+    L.end_run(
+        run_id,
+        {
+            "final_answer": "answer",
+            "status": "halted",
+            "specialist": "safety",
+            "equipment_model": "thermal_station",
+            "source_refs": ["a.pdf, p.1, Safety"],
+            "hazard_categories": ["high_voltage"],
+            "ppe_required": ["insulated gloves"],
+            "requires_human_review": True,
+            "escalation_reason": "x" * 500,
+            "confidence_level": "high",
+            "explained": True,
+            "answer_sha256": "abc",
+            "trace_summary": ["request", "planning", "safety"],
+        },
+    )
+    record = [r for r in L._read(L.AUDIT_LOG) if r["type"] == "run_end"][0]
+    assert record["status"] == "halted" and record["specialist"] == "safety"
+    assert record["source_refs"] == ["a.pdf, p.1, Safety"]
+    assert record["hazard_categories"] == ["high_voltage"]
+    assert record["requires_human_review"] is True and record["explained"] is True
+    assert record["trace_summary"] == ["request", "planning", "safety"]
+    assert len(record["escalation_reason"]) == 200
+
+
+def test_run_exists_finds_real_runs_only():
+    run_id = L.start_run("q")
+    assert L.run_exists(run_id) is True
+    assert L.run_exists("0" * 12) is False
+
+
+def test_confidence_levels_match_the_explanation_spec():
+    assert L.confidence_level(0.2) == "low"
+    assert L.confidence_level(0.5) == "medium"
+    assert L.confidence_level(0.69) == "medium"
+    assert L.confidence_level(0.7) == "high"
+
+
+def test_summary_reports_status_rates_and_excludes_blocked_runs_from_latency():
+    _metrics("ok", latency=2.0)
+    _metrics("ok", latency=4.0)
+    _metrics("blocked", latency=0.0)
+    _metrics("unavailable", latency=1.0)
+    summary = L.monitoring_summary()
+    assert summary["runs"] == 4
+    assert summary["status_counts"] == {"ok": 2, "blocked": 1, "unavailable": 1}
+    assert summary["blocked_rate"] == 0.25 and summary["unavailable_rate"] == 0.25
+    assert summary["p50_latency_s"] in (2.0, 4.0)  # the 0.0 of the blocked run is not counted
+    assert summary["by_equipment"] == {"thermal_station": 4}
+
+
+def test_summary_limit_keeps_only_the_most_recent_runs():
+    for _ in range(5):
+        _metrics("ok")
+    for _ in range(3):
+        _metrics("unavailable")
+    assert L.monitoring_summary(limit=3)["status_counts"] == {"unavailable": 3}
+
+
+def test_low_confidence_rate_counts_only_scored_runs():
+    _metrics("ok", confidence=0.9)
+    _metrics("ok", confidence=0.4)
+    _metrics("ok", confidence=0.0)  # no explanation yet: not scored
+    summary = L.monitoring_summary()
+    assert summary["confidence_scored_runs"] == 2
+    assert summary["low_confidence_rate"] == 0.5
+
+
+def test_low_confidence_rate_is_none_when_nothing_is_scored():
+    _metrics("ok")
+    assert L.monitoring_summary()["low_confidence_rate"] is None
+
+
+def test_explainability_coverage_is_the_share_of_answers_with_an_explanation_and_sources():
+    _metrics("ok", explained=True, sources=2)
+    _metrics("ok", explained=True, sources=0)  # explained but no source: not covered
+    _metrics("ok", explained=False, sources=3)
+    _metrics("blocked")  # not an answer
+    assert L.monitoring_summary()["explainability_coverage"] == round(1 / 3, 3)
+
+
+def test_helpfulness_is_reported_by_confidence_level():
+    high = _metrics("ok", confidence=0.9)
+    low = _metrics("ok", confidence=0.3)
+    L.log_feedback(high, True)
+    L.log_feedback(low, False)
+    L.log_feedback(low, False)
+    result = L.monitoring_summary()["helpful_rate_by_confidence"]
+    assert result == {"high": 1.0, "low": 0.0}
+
+
+def test_no_alerts_below_the_minimum_sample():
+    for _ in range(5):
+        _metrics("unavailable")
+    assert L.check_alerts(L.monitoring_summary()) == []
+
+
+def test_alerts_fire_for_error_spikes_and_blocked_anomalies():
+    for _ in range(6):
+        _metrics("ok")
+    for _ in range(3):
+        _metrics("unavailable")  # 3 of 13 = 0.231, above the 0.20 threshold
+    for _ in range(4):
+        _metrics("blocked")  # 4 of 13 = 0.308, above the 0.30 threshold
+    alerts = {a["name"]: a for a in L.check_alerts(L.monitoring_summary())}
+    assert alerts["unavailable_rate"]["severity"] == "critical"
+    assert alerts["blocked_rate"]["severity"] == "warning"
+    assert alerts["unavailable_rate"]["value"] == round(3 / 13, 3)
+    assert alerts["unavailable_rate"]["threshold"] == 0.2
+
+
+def test_alert_thresholds_can_be_overridden_by_environment_and_by_argument(monkeypatch):
+    for _ in range(10):
+        _metrics("ok")
+    for _ in range(2):
+        _metrics("blocked")
+    summary = L.monitoring_summary()  # blocked rate 2/12 = 0.167
+    assert L.check_alerts(summary) == []
+    monkeypatch.setenv("ALERT_BLOCKED_RATE", "0.1")
+    assert [a["name"] for a in L.check_alerts(summary)] == ["blocked_rate"]
+    assert L.check_alerts(summary, {"blocked_rate": 0.5}) == []
+    monkeypatch.setenv("ALERT_BLOCKED_RATE", "not-a-number")  # ignored, default 0.3 applies
+    assert L.check_alerts(summary) == []

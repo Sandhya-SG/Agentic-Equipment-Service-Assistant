@@ -1,16 +1,18 @@
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.routes.health import router as health_router
+from app.schemas.feedback import FeedbackRequest, FeedbackResponse
 from app.schemas.request import ChatRequest
 from app.schemas.response import ChatResponse
 from app.services.chat_service import handle_chat
 from app.services.graph_runner import warm_up
+from asa.components import logging_sub
 from asa.components.tracing import flush_tracing
 from asa.ingestion.metadata import DOCUMENT_REGISTRY
 
@@ -67,3 +69,25 @@ def chat(request: ChatRequest):
     if status_code == 200:
         return result
     return JSONResponse(status_code=status_code, content=result.model_dump())
+
+
+@app.post("/api/feedback", response_model=FeedbackResponse)
+def feedback(request: FeedbackRequest):
+    """Record whether an answer was helpful, linked to its run so confidence can be checked later."""
+    if not logging_sub.run_exists(request.run_id):
+        raise HTTPException(status_code=404, detail="Unknown run_id")
+    return FeedbackResponse(recorded=logging_sub.log_feedback(request.run_id, request.helpful, request.comment or ""))
+
+
+@app.get("/api/monitoring")
+def monitoring(
+    limit: int = Query(200, ge=1, le=5000, description="Only the most recent runs"),
+    verify: bool = Query(True, description="Also re-walk the audit trail and check its hash chain"),
+):
+    """Operational numbers, alerts and the audit-trail integrity check. Aggregates only, no text."""
+    summary = logging_sub.monitoring_summary(limit)
+    return {
+        "summary": summary,
+        "alerts": logging_sub.check_alerts(summary),
+        "audit_integrity": logging_sub.verify_audit_integrity() if verify else None,
+    }

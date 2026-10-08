@@ -23,6 +23,7 @@ Design decisions:
 
 from __future__ import annotations
 
+import collections
 import hashlib
 import json
 import os
@@ -180,6 +181,43 @@ def start_run(raw_query: str) -> str:
     return run_id
 
 
+def log_blocked(conversation_id: str, categories: list[str], length: int) -> str:
+    """Record a request rejected by the input guard and return its run_id.
+
+    Only the guard categories and the input length are stored, never the text, so a blocked
+    attack is part of the tamper-evident trail without the trail holding the attack.
+    """
+    run_id = uuid.uuid4().hex[:12]
+    now = _now_iso()
+    _append(
+        AUDIT_LOG,
+        {
+            "type": "run_start",
+            "run_id": run_id,
+            "timestamp": now,
+            "query": "[withheld: blocked input]",
+            "conversation_id": conversation_id,
+        },
+    )
+    _append(
+        AUDIT_LOG,
+        {
+            "type": "run_end",
+            "run_id": run_id,
+            "timestamp": now,
+            "status": "blocked",
+            "blocked_categories": sorted(categories),
+            "input_length": length,
+            "escalated": False,
+            "safety_verdict": None,
+            "confidence": None,
+            "answer_preview": "",
+        },
+    )
+    emit_metrics(run_id, {"status": "blocked", "safety_verdict": "n/a"}, 0.0)
+    return run_id
+
+
 def log_trace(run_id: str, trace: list[TraceEvent]) -> bool:
     """Persist the agent trace events accumulated in state['trace'] for a run."""
     events = [asdict(e) if isinstance(e, TraceEvent) else dict(e) for e in trace]
@@ -194,20 +232,48 @@ def log_trace(run_id: str, trace: list[TraceEvent]) -> bool:
     )
 
 
+# Optional fields a caller can pass in `final_state`; they complete the provenance of a run.
+_RUN_END_FIELDS = (
+    "status",
+    "specialist",
+    "equipment_model",
+    "source_refs",
+    "hazard_categories",
+    "hazard_count",
+    "ppe_required",
+    "requires_human_review",
+    "escalation_reason",
+    "confidence_level",
+    "explained",
+    "answer_sha256",
+    "error_type",
+    "trace_summary",
+)
+
+
 def end_run(run_id: str, final_state: dict) -> bool:
-    """Close a run, recording the outcome (answer/escalation) and key signals."""
-    return _append(
-        AUDIT_LOG,
-        {
-            "type": "run_end",
-            "run_id": run_id,
-            "timestamp": _now_iso(),
-            "escalated": final_state.get("escalated", False),
-            "safety_verdict": final_state.get("safety_verdict"),
-            "confidence": final_state.get("confidence"),
-            "answer_preview": (final_state.get("final_answer") or "")[:300],
-        },
-    )
+    """Close a run, recording the outcome (answer/escalation) and key signals.
+
+    Besides the answer preview, the record can carry the full provenance of the run: status,
+    the specialist that handled it, the equipment, references to the sources used (never their
+    text), the hazard categories, PPE, the escalation reason, the confidence level, whether an
+    explanation was produced, and a hash of the answer the user saw.
+    """
+    record = {
+        "type": "run_end",
+        "run_id": run_id,
+        "timestamp": _now_iso(),
+        "escalated": final_state.get("escalated", False),
+        "safety_verdict": final_state.get("safety_verdict"),
+        "confidence": final_state.get("confidence"),
+        "answer_preview": (final_state.get("final_answer") or "")[:300],
+    }
+    for key in _RUN_END_FIELDS:
+        if key in final_state:
+            record[key] = final_state[key]
+    if isinstance(record.get("escalation_reason"), str):
+        record["escalation_reason"] = record["escalation_reason"][:200]
+    return _append(AUDIT_LOG, record)
 
 
 def log_feedback(run_id: str, helpful: bool, comment: str = "") -> bool:
@@ -231,14 +297,30 @@ def emit_metrics(run_id: str, final_state: dict, latency_s: float) -> dict:
         "run_id": run_id,
         "timestamp": _now_iso(),
         "latency_s": round(latency_s, 3),
-        "confidence": final_state.get("confidence", 0.0),
+        "confidence": final_state.get("confidence", 0.0) or 0.0,
         "escalated": bool(final_state.get("escalated", False)),
         "safety_verdict": final_state.get("safety_verdict", "unknown"),
         "num_chunks": len(final_state.get("retrieved_chunks", []) or []),
         "retry_count": final_state.get("retry_count", 0),
     }
+    for key in (
+        "status",
+        "specialist",
+        "equipment_model",
+        "source_count",
+        "hazard_count",
+        "confidence_level",
+        "explained",
+    ):
+        if key in final_state:
+            metrics[key] = final_state[key]
     _append(METRICS_LOG, metrics)
     return metrics
+
+
+def run_exists(run_id: str) -> bool:
+    """True if an audit record for this run was written (used to validate feedback)."""
+    return any(rec.get("run_id") == run_id and rec.get("type") == "run_start" for rec in _read(AUDIT_LOG))
 
 
 # --------------------------------------------------------------------------- #
@@ -268,28 +350,124 @@ def _read(path: Path) -> list[dict]:
     return out
 
 
-def monitoring_summary() -> dict:
-    """Aggregate metrics across all runs — the numbers a monitor/dashboard shows."""
+CONFIDENCE_LOW = 0.50  # below this the confidence level is "low"
+CONFIDENCE_FLOOR = 0.70  # below this an answer is flagged as low confidence (PRD escalation gate)
+
+
+def confidence_level(confidence: float) -> str:
+    """Map a confidence score to the levels used by the explanation layer."""
+    if confidence < CONFIDENCE_LOW:
+        return "low"
+    if confidence < CONFIDENCE_FLOOR:
+        return "medium"
+    return "high"
+
+
+def _rate(count: int, total: int) -> float:
+    return round(count / total, 3) if total else 0.0
+
+
+def monitoring_summary(limit: int | None = None) -> dict:
+    """Aggregate metrics across runs (all replicas) - the numbers a monitor or dashboard shows.
+
+    `limit` keeps only the most recent runs. Beyond latency and escalation it reports the rates
+    the PRD monitors (blocked, unavailable, low confidence), the explainability coverage
+    (answered runs that carry an explanation) and, when feedback exists, how often answers at
+    each confidence level were rated helpful (a check that confidence means something).
+    """
     metrics = [m for m in _read(METRICS_LOG) if m.get("type") == "metrics"]
+    metrics.sort(key=lambda m: m.get("timestamp", ""))
+    if limit:
+        metrics = metrics[-limit:]
     feedback = [f for f in _read(FEEDBACK_LOG) if f.get("type") == "feedback"]
     n = len(metrics)
     if n == 0:
         return {"runs": 0}
 
+    statuses = collections.Counter(m.get("status", "unknown") for m in metrics)
     escalations = sum(1 for m in metrics if m.get("escalated"))
-    latencies = sorted(m.get("latency_s", 0.0) for m in metrics)
-    confidences = [m.get("confidence", 0.0) for m in metrics]
+    # Blocked requests never reach the agents, so they are left out of the latency figures.
+    latencies = sorted(m.get("latency_s", 0.0) for m in metrics if m.get("status") != "blocked") or [0.0]
+    confidences = [m.get("confidence", 0.0) or 0.0 for m in metrics]
+    scored = [c for c in confidences if c > 0]
     helpful = sum(1 for f in feedback if f.get("helpful"))
+
+    answered = [m for m in metrics if m.get("status") == "ok"]
+    explained = sum(1 for m in answered if m.get("explained") and (m.get("source_count") or 0) >= 1)
+
+    by_run = {m.get("run_id"): m for m in metrics}
+    helpful_by_level: dict[str, list[int]] = collections.defaultdict(lambda: [0, 0])  # level -> [helpful, total]
+    for f in feedback:
+        m = by_run.get(f.get("run_id"))
+        if m and (m.get("confidence") or 0) > 0:
+            level = confidence_level(m["confidence"])
+            helpful_by_level[level][1] += 1
+            helpful_by_level[level][0] += 1 if f.get("helpful") else 0
 
     return {
         "runs": n,
+        "status_counts": dict(statuses),
         "escalation_rate": round(escalations / n, 3),
+        "blocked_rate": _rate(statuses.get("blocked", 0), n),
+        "unavailable_rate": _rate(statuses.get("unavailable", 0), n),
+        "clarification_rate": _rate(statuses.get("clarification", 0), n),
+        "halted_rate": _rate(statuses.get("halted", 0), n),
         "avg_confidence": round(sum(confidences) / n, 3),
-        "p50_latency_s": latencies[n // 2],
-        "p95_latency_s": latencies[min(int(n * 0.95), n - 1)],
+        "confidence_scored_runs": len(scored),
+        "low_confidence_rate": _rate(sum(1 for c in scored if c < CONFIDENCE_FLOOR), len(scored)) if scored else None,
+        "explainability_coverage": _rate(explained, len(answered)) if answered else None,
+        "p50_latency_s": latencies[len(latencies) // 2],
+        "p95_latency_s": latencies[min(int(len(latencies) * 0.95), len(latencies) - 1)],
         "feedback_count": len(feedback),
         "helpful_rate": round(helpful / len(feedback), 3) if feedback else None,
+        "helpful_rate_by_confidence": {k: _rate(v[0], v[1]) for k, v in helpful_by_level.items()},
+        "by_equipment": dict(collections.Counter(m.get("equipment_model") or "none" for m in metrics)),
     }
+
+
+# Alert thresholds (PRD 10.3: error spikes, low-confidence surges, safety-block anomalies).
+# Override with environment variables, for example ALERT_BLOCKED_RATE=0.2.
+DEFAULT_ALERT_THRESHOLDS = {
+    "min_runs": 10,  # do not alert on tiny samples
+    "unavailable_rate": 0.20,
+    "blocked_rate": 0.30,
+    "escalation_rate": 0.50,
+    "low_confidence_rate": 0.40,
+}
+_ALERT_RULES = (
+    ("unavailable_rate", "critical", "Error spike: too many requests could not be answered"),
+    ("blocked_rate", "warning", "Safety-block anomaly: many requests blocked by the input guard"),
+    ("escalation_rate", "warning", "Escalation surge: many requests escalated to a human"),
+    ("low_confidence_rate", "warning", "Low-confidence surge: many answers below the confidence floor"),
+)
+
+
+def _alert_thresholds(overrides: dict | None) -> dict:
+    thresholds = dict(DEFAULT_ALERT_THRESHOLDS)
+    for key in thresholds:
+        raw = os.getenv(f"ALERT_{key.upper()}")
+        if raw:
+            try:
+                thresholds[key] = float(raw)
+            except ValueError:
+                pass
+    thresholds.update(overrides or {})
+    return thresholds
+
+
+def check_alerts(summary: dict, thresholds: dict | None = None) -> list[dict]:
+    """Compare a monitoring summary with the thresholds and return the alerts that fired."""
+    limits = _alert_thresholds(thresholds)
+    if summary.get("runs", 0) < limits["min_runs"]:
+        return []
+    alerts = []
+    for name, severity, message in _ALERT_RULES:
+        value = summary.get(name)
+        if value is not None and value > limits[name]:
+            alerts.append(
+                {"name": name, "severity": severity, "value": value, "threshold": limits[name], "message": message}
+            )
+    return alerts
 
 
 def _verify_chain(records: list[dict]) -> int | None:
