@@ -351,3 +351,12 @@ def test_table_of_contents_lines_are_not_quoted():
     )
     answer = "Daily preventive maintenance check [Source: aem_thermal_station.pdf, page 6, section Contents]."
     assert explain(rag_state(final_answer=answer, retrieved_chunks=[toc]), "ok")["citations"] == []
+
+
+def test_a_line_full_of_section_numbers_is_not_quotable_even_when_it_is_mostly_words():
+    from asa.components.explanation import _SECTION_NUMBER, _is_furniture
+
+    assert _SECTION_NUMBER.findall("see 11.1 and 11.1.1 and 2.5.6 for details") == ["11.1", "11.1.1", "2.5.6"]
+    line = "Preventive maintenance overview see 11.1 daily checks in 11.1.1 and semi annual checks in 11.1.2 for the thermal station"
+    assert _is_furniture(line)
+    assert not _is_furniture("Replace any label that is not legible or is peeling away from the panel surface.")

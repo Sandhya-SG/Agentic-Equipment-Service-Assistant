@@ -105,7 +105,7 @@ _LEADING_FURNITURE = re.compile(
     r"^(?:\d+-\d+\s+|Rev\s+\d+\s+|AEM\s+(?:1kW\s+)?Thermal\s+(?:Station|Retrofit\s+System)\s+|Table\s+\d+-\d+\s+|\d+(?:\.\d+)+\s+)+",
     re.IGNORECASE,
 )
-_SECTION_NUMBER = re.compile(r"\d+(?:\.\d+)+")
+_SECTION_NUMBER = re.compile(r"\b\d+(?:\.\d+)+\b")
 
 
 def _is_furniture(sentence: str) -> bool:
