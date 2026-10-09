@@ -1,0 +1,59 @@
+# Network isolation for the aem namespace. Default deny, then allow only what the app needs:
+#   browser (port-forward / ingress) -> frontend:5000 -> backend:8000 -> OpenAI (443) and DNS.
+# Needs a CNI that enforces NetworkPolicy (checked on the local kind cluster, see k8s/README.md).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: aem
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: aem
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: kube-system}
+          podSelector:
+            matchLabels: {k8s-app: kube-dns}
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: frontend
+  namespace: aem
+spec:
+  podSelector:
+    matchLabels: {app: frontend}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - ports: [{protocol: TCP, port: 5000}]       # users reach the UI
+  egress:
+    - to: [{podSelector: {matchLabels: {app: backend}}}]
+      ports: [{protocol: TCP, port: 8000}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: backend
+  namespace: aem
+spec:
+  podSelector:
+    matchLabels: {app: backend}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from: [{podSelector: {matchLabels: {app: frontend}}}]     # only the frontend calls the API
+      ports: [{protocol: TCP, port: 8000}]
+  egress:
+    - ports: [{protocol: TCP, port: 443}]        # OpenAI (and Langfuse cloud if enabled)

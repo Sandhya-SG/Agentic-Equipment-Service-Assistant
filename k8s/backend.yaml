@@ -18,12 +18,29 @@ spec:
       # Kubernetes would inject FRONTEND_PORT=tcp://... and BACKEND_PORT=tcp://... for the Services
       # named frontend and backend, which collide with this app's own settings.
       enableServiceLinks: false
+      automountServiceAccountToken: false        # the app never calls the Kubernetes API
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
         runAsGroup: 10001
         seccompProfile: {type: RuntimeDefault}
       terminationGracePeriodSeconds: 60          # let in-flight (slow) agent requests finish
+      # Chroma's SQLite store needs write access even to read (lock/WAL files), so the index baked into
+      # the image is copied into a writable volume, which lets the root filesystem stay read-only.
+      initContainers:
+        - name: seed-index
+          image: aem-backend:k8s
+          imagePullPolicy: IfNotPresent
+          command: ["sh", "-c", "cp -R /app/chroma_store/. /seed/"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {memory: 128Mi, ephemeral-storage: 64Mi}
+          volumeMounts:
+            - {name: chroma, mountPath: /seed}
       containers:
         - name: backend
           image: aem-backend:k8s
@@ -38,10 +55,11 @@ spec:
                 secretKeyRef: {name: aem-secrets, key: OPENAI_API_KEY}
           securityContext:
             allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true            # writable paths are the mounted volumes below
             capabilities: {drop: ["ALL"]}
           resources:
             requests: {cpu: 250m, memory: 1Gi}
-            limits: {memory: 3Gi}
+            limits: {memory: 3Gi, ephemeral-storage: 1Gi}
           # Loading torch, the embedding model and the index takes a while: allow up to ~200 s,
           # and restart the container if it never becomes ready.
           startupProbe:
@@ -61,12 +79,15 @@ spec:
           volumeMounts:
             - {name: logs, mountPath: /app/logs}
             - {name: tmp, mountPath: /tmp}
+            - {name: chroma, mountPath: /app/chroma_store}
       volumes:
         # Demo: audit logs live as long as the pod. A real deployment ships them to a durable store.
         - name: logs
-          emptyDir: {}
+          emptyDir: {sizeLimit: 500Mi}
         - name: tmp
-          emptyDir: {}
+          emptyDir: {sizeLimit: 200Mi}
+        - name: chroma
+          emptyDir: {sizeLimit: 100Mi}
 ---
 apiVersion: v1
 kind: Service
