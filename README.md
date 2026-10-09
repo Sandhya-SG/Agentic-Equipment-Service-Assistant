@@ -25,6 +25,45 @@ cp .env.example .env        # Windows PowerShell: Copy-Item .env.example .env
 
 `.env` is for your own settings and is never committed. When you add a new environment variable in code, add it to `.env.example` in the same PR.
 
+## Team quick start (teammates: Option A or B, plus Langfuse)
+
+Teammates run the app on their own computer with **Option A** (Python) or **Option B** (Docker Compose) and look at traces in their own **Langfuse**. Kubernetes (Option D) is run only by Sandhya for the demo and the scalability evidence; nobody else needs to set it up.
+
+**Install once**
+1. **Docker Desktop** (needed for Langfuse, and for Option B). Start it and wait until it says it is running. In Settings, Resources, give it at least **6 GB of memory**: Langfuse needs about 2 to 3 GB and the backend about 0.5 GB when idle.
+2. **Python 3.11 or newer** and **Git** (Option A needs Python; Option B only needs Docker).
+3. Clone the repository and create your `.env` from the template (first-time setup above). Put **your own OpenAI API key** in it as `OPENAI_API_KEY`. Never commit `.env` or paste a key in chat.
+
+**Start Langfuse (your own copy, once per session)**
+1. Generate your own key pair and paste both lines into `.env`:
+   ```
+   python -c "import uuid; print('LANGFUSE_PUBLIC_KEY=pk-lf-' + str(uuid.uuid4())); print('LANGFUSE_SECRET_KEY=sk-lf-' + str(uuid.uuid4()))"
+   ```
+2. Start it and wait about a minute for the first start:
+   ```
+   docker compose -f docker-compose.langfuse.yml up -d
+   ```
+3. Open http://localhost:3000 and sign in with `admin@aem.local` and `change-me-locally`.
+
+**Start the application: pick one**
+- **Option A (Python, best for development).** Follow "Option A" below: virtual environment, `pip install -r requirements.txt`, `PYTHONPATH`, `python scripts/ingest.py` once, then `uvicorn app.main:app --reload --port 8000` in one terminal and `flask --app frontend.app run --port 5000` in a second one.
+- **Option B (Docker Compose, to check the containers).** `docker compose up --build` (first build takes several minutes).
+
+**Use it**
+1. Open http://localhost:5000, choose the equipment and ask a question.
+2. Open http://localhost:3000. Your trace appears within seconds, tagged `run:<run_id>`, the same ID as the audit log and the API response.
+3. Optional: http://localhost:8000/api/monitoring shows runs, alerts and the audit-chain check.
+
+**Stop**
+- Option A: `Ctrl+C` in each terminal. Option B: `Ctrl+C`, then `docker compose down`.
+- Langfuse: `docker compose -f docker-compose.langfuse.yml down` (add `-v` to delete all trace data, and run it if you change the keys).
+
+**Rules**
+- Everyone uses their **own** Langfuse and keys. Do not share keys or a server, because traces would mix.
+- By default traces hold no question or answer text. Leave `LANGFUSE_CAPTURE_CONTENT` off unless you need it.
+- Langfuse ports are bound to `127.0.0.1` and its passwords are local defaults. Run it only on your own machine.
+- If something fails, see the troubleshooting under Option B and the Langfuse section below, or ask Sandhya.
+
 ## Option A: run locally with Python (no Docker)
 
 Best for day-to-day development. No Docker needed. Python 3.11 or 3.12 is what CI tests (newer versions also ran locally). Do the steps in this order, from the repository root, after the first-time setup above (clone and `.env` with your `OPENAI_API_KEY`).
