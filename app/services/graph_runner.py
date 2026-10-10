@@ -62,14 +62,40 @@ def _trace_detail(update, duration_ms: int) -> dict:
     return detail
 
 
-def run_graph(message: str, equipment_model: str | None) -> AgentState:
+def run_graph(
+    message: str,
+    equipment_model: str | None,
+    *,
+    clarification_response: str | None = None,
+    resolved_query: str | None = None,
+    clarification_count: int = 0,
+) -> AgentState:
     """Run request -> planning -> specialist and return the final shared state.
 
     The graph is streamed step by step so that the order and the duration of every agent are
     recorded in `state["trace"]` (the audit trail and the interface show which agents ran).
     The agents themselves are not changed.
     """
-    initial = new_state(raw_query=message, equipment_model=equipment_model)
+    
+    initial = new_state(
+        raw_query=message,
+        equipment_model=equipment_model,
+    )
+
+    if clarification_response is not None:
+        initial["clarification_response"] = (
+            clarification_response
+        )
+
+    if resolved_query is not None:
+        initial["resolved_query"] = (
+            resolved_query
+        )
+
+    initial["clarification_count"] = (
+        clarification_count
+    )
+
     trace: list[TraceEvent] = []
     final = None
     previous = time.monotonic()

@@ -8,6 +8,11 @@ from app.main import app
 from asa.components import logging_sub
 from asa.graph.state import Chunk, TraceEvent
 
+from app.services.clarification_store import (
+    clear_all,
+    get_pending,
+)
+
 client = TestClient(app)
 REAL_EXPLAIN = chat_service._explain
 
@@ -25,6 +30,20 @@ CHUNK = Chunk(
 )
 
 
+@pytest.fixture(autouse=True)
+def clear_clarification_state():
+    """
+    Prevent pending clarification state from leaking
+    between chat tests.
+    """
+
+    clear_all()
+
+    yield
+
+    clear_all()
+
+
 @pytest.fixture
 def graph(monkeypatch):
     """Replace the agent graph. Tests set graph['state'] and read graph['calls']."""
@@ -40,10 +59,22 @@ def graph(monkeypatch):
         "error": None,
     }
 
-    def fake_run_graph(message, equipment_model):
-        box["calls"].append((message, equipment_model))
+    def fake_run_graph(
+        message,
+        equipment_model,
+        **kwargs,
+    ):
+        box["calls"].append(
+            {
+                "message": message,
+                "equipment_model": equipment_model,
+                **kwargs,
+            }
+        )
+
         if box["error"]:
             raise box["error"]
+
         return box["state"]
 
     monkeypatch.setattr(chat_service, "run_graph", fake_run_graph)
@@ -71,12 +102,23 @@ def test_chat_returns_grounded_answer_with_sources(graph):
 
 def test_chat_passes_equipment_model_to_graph(graph):
     ask()
-    assert graph["calls"] == [("The printer will not start", EQUIPMENT)]
+
+    call = graph["calls"][0]
+
+    assert (
+        call["message"]
+        == "The printer will not start"
+    )
+
+    assert (
+        call["equipment_model"]
+        == EQUIPMENT
+    )
 
 
 def test_chat_redacts_pii_before_calling_the_model(graph):
     ask("Contact me at jane.doe@example.com about the fault")
-    sent = graph["calls"][0][0]
+    sent = graph["calls"][0]["message"]
     assert "jane.doe@example.com" not in sent
     assert "[EMAIL]" in sent
 
@@ -94,12 +136,194 @@ def test_chat_asks_for_clarification(graph):
         "request_status": "CLARIFY",
         "clarification_question": "Please select the equipment model before continuing.",
     }
-    response = client.post("/api/chat", json={"message": "It is broken"})
+
+    response = client.post(
+        "/api/chat",
+        json={
+            "message":
+                "It is broken",
+
+            "conversation_id":
+                "clarification-only-test",
+        },
+    )
+
     body = response.json()
     assert response.status_code == 200
     assert body["status"] == "clarification"
     assert body["response"] == "Please select the equipment model before continuing."
     assert body["sources"] == []
+
+
+def test_chat_continues_after_clarification(
+    graph,
+):
+    conversation_id = (
+        "clarification-test"
+    )
+
+    # --------------------------------------------------
+    # Turn 1 - ambiguous request
+    # --------------------------------------------------
+
+    graph["state"] = {
+        "request_status":
+            "CLARIFY",
+
+        "clarification_question":
+            (
+                "What specific issue are you "
+                "experiencing with the thermal station?"
+            ),
+    }
+
+    first = ask(
+        "It's not working.",
+        conversation_id=
+            conversation_id,
+    )
+
+    first_body = first.json()
+
+    assert first.status_code == 200
+
+    assert (
+        first_body["status"]
+        == "clarification"
+    )
+
+    assert (
+        first_body["conversation_id"]
+        == conversation_id
+    )
+
+    pending = get_pending(
+        conversation_id
+    )
+
+    assert pending is not None
+
+    assert (
+        pending.original_query
+        == "It's not working."
+    )
+
+    assert (
+        pending.equipment_model
+        == EQUIPMENT
+    )
+
+    # --------------------------------------------------
+    # Turn 2 - engineer answers clarification
+    # --------------------------------------------------
+
+    graph["state"] = {
+        "request_status":
+            "READY",
+
+        "current_step":
+            "diagnostic",
+
+        "final_answer":
+            (
+                "Diagnostic assessment based on "
+                "the documented evidence."
+            ),
+
+        "retrieved_chunks":
+            [CHUNK],
+
+        "escalated":
+            False,
+    }
+
+    second = ask(
+        (
+            "The temperature is not reaching "
+            "the setpoint."
+        ),
+        conversation_id=
+            conversation_id,
+    )
+
+    second_body = second.json()
+
+    assert second.status_code == 200
+
+    assert (
+        second_body["status"]
+        == "ok"
+    )
+
+    assert (
+        second_body["specialist"]
+        == "diagnostic"
+    )
+
+    # --------------------------------------------------
+    # Inspect second graph invocation
+    # --------------------------------------------------
+
+    assert len(
+        graph["calls"]
+    ) == 2
+
+    second_call = graph["calls"][1]
+
+    assert (
+        second_call[
+            "message"
+        ]
+        == (
+            "The temperature is not reaching "
+            "the setpoint."
+        )
+    )
+
+    assert (
+        second_call[
+            "equipment_model"
+        ]
+        == EQUIPMENT
+    )
+
+    assert (
+        second_call[
+            "clarification_response"
+        ]
+        == (
+            "The temperature is not reaching "
+            "the setpoint."
+        )
+    )
+
+    assert (
+        "It's not working."
+        in second_call[
+            "resolved_query"
+        ]
+    )
+
+    assert (
+        "temperature is not reaching"
+        in second_call[
+            "resolved_query"
+        ].lower()
+    )
+
+    assert (
+        second_call[
+            "clarification_count"
+        ]
+        == 1
+    )
+
+    assert (
+        get_pending(
+            conversation_id
+        )
+        is None
+    )
 
 
 def test_chat_reports_halt_verdict(graph):

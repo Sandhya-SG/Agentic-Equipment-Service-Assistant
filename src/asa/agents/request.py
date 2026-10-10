@@ -33,9 +33,14 @@ def request_node(
     print("\n[Request Agent]")
 
     question = (
-        state.get("raw_query")
+        state.get("resolved_query")
+        or state.get("raw_query")
         or ""
     ).strip()
+
+    is_clarification_continuation = bool(
+        state.get("resolved_query")
+    )
 
     equipment_model = (
         state.get("equipment_model")
@@ -126,6 +131,9 @@ Selected equipment:
 Engineer request:
 {question}
 
+Clarification continuation:
+{"YES" if is_clarification_continuation else "NO"}
+
 Your ONLY task is to determine whether the request
 contains enough information to proceed to specialist
 planning.
@@ -156,6 +164,8 @@ What should I check?"
 
 "The emergency stop is active. What should I do?"
 
+"Can I open the panel while the equipment is powered?"
+
 Examples that should be CLARIFY:
 
 "It's not working."
@@ -165,8 +175,6 @@ Examples that should be CLARIFY:
 "How do I replace it?"
 
 "What should I do about this?"
-
-"Can I open the panel while the equipment is powered?"
 
 Important rules:
 
@@ -179,7 +187,10 @@ Important rules:
 4. Do not select RAG, Diagnostic, or Safety.
 
 5. Do not ask for optional information merely because
-   more detail could be useful.
+   more detail could be useful. READY means there is
+   enough information for meaningful routing or retrieval;
+   it does NOT mean that every detail required for the
+   eventual diagnosis or answer is already known.
 
 6. Ask for clarification only when the missing detail
    prevents meaningful routing or retrieval.
@@ -226,7 +237,32 @@ Important rules:
    specialist planning. The Safety Agent can determine
    whether additional documented information is needed.
 
-10. If clarification is required for a non-safety
+10. When evaluating a resolved request after
+    clarification, treat the engineer's clarification
+    as additional context to the original request.
+
+    Do not ask another clarification merely to obtain a
+    numerical value, exact setting, measurement, error
+    value, operating parameter, or other optional detail
+    when the combined request already identifies a
+    meaningful symptom, component, procedure, safety
+    issue, or documentation topic.
+
+    Example:
+
+    Original request:
+    "It's not working."
+
+    Engineer clarification:
+    "The temperature is not reaching the setpoint."
+
+    -> READY
+
+    The exact temperature setpoint is not required for
+    the Planning Agent to route this request to
+    Diagnostic.   
+
+11. If clarification is required for a non-safety
     request, ask exactly ONE concise question requesting
     the most important missing detail.
 

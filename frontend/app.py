@@ -56,10 +56,24 @@ HTML_TEMPLATE = """
         const sendButton = document.getElementById("send");
         const messageBox = document.getElementById("message");
         const DEFAULT_PLACEHOLDER = messageBox.placeholder;
-        // After a clarifying question the answer is sent as a new, complete question.
+
+        let conversationId = (
+            window.crypto
+            && window.crypto.randomUUID
+        )
+            ? window.crypto.randomUUID()
+            : (
+                Date.now().toString(36)
+                + "-"
+                + Math.random().toString(36).slice(2)
+            );
+
+
+        // After a clarifying question, the next message continues
+        // the same conversation and is treated as clarification context.
         function setClarifying(on) {
             messageBox.placeholder = on
-                ? "Answer the question above with full detail (it is sent as a new question)..."
+                ? "Answer the clarification question above..."
                 : DEFAULT_PLACEHOLDER;
         }
 
@@ -119,12 +133,20 @@ HTML_TEMPLATE = """
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
                         message: messageBox.value,
-                        equipment_model: select.value || null
+                        equipment_model: select.value || null,
+                        conversation_id: conversationId
                     })
                 });
+
                 const data = await res.json();
+
+                if (data.conversation_id) {
+                    conversationId = data.conversation_id;
+                }
+
                 render(data);
                 setClarifying(data.status === "clarification");
+
                 if (data.status === "clarification") messageBox.value = "";
             } catch (error) {
                 render({ status: "error", error: "Error: " + error.message });
@@ -157,7 +179,12 @@ def equipment():
 @app.route("/api/ask", methods=["POST"])
 def ask_backend():
     payload = request.get_json(silent=True) or {}
-    body = {"message": payload.get("message", ""), "equipment_model": payload.get("equipment_model")}
+
+    body = {
+        "message": payload.get("message", ""),
+        "equipment_model": payload.get("equipment_model"),
+        "conversation_id": payload.get("conversation_id"),
+    }
 
     req = urllib_request.Request(
         f"{BACKEND_URL}/api/chat",

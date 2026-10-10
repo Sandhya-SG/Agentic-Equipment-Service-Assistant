@@ -9,8 +9,15 @@ class StreamingGraph:
     def __init__(self, chunks):
         self.chunks = chunks
         self.config = None
+        self.initial_state = None
 
-    def stream(self, state, config=None, stream_mode=None):
+    def stream(
+        self,
+        state,
+        config=None,
+        stream_mode=None,
+    ):
+        self.initial_state = state
         self.config = config
         yield from self.chunks
 
@@ -71,3 +78,84 @@ def test_a_graph_that_produces_no_state_is_an_error(run):
 def test_a_node_that_returns_nothing_is_still_traced(run):
     state = run([("updates", {"request": None}), ("values", {"final_answer": "x"})])
     assert [event.agent for event in state["trace"]] == ["request"]
+
+
+def test_clarification_context_is_added_to_initial_state(
+    monkeypatch,
+):
+    graph = StreamingGraph(
+        [
+            (
+                "values",
+                {
+                    "clarification_count": 1,
+                },
+            ),
+        ]
+    )
+
+    monkeypatch.setattr(
+        graph_runner,
+        "_graph",
+        lambda: graph,
+    )
+
+    monkeypatch.setattr(
+        graph_runner,
+        "graph_config",
+        lambda: {},
+    )
+
+    result = graph_runner.run_graph(
+        "The temperature is not reaching the setpoint.",
+        "thermal_station",
+        clarification_response=(
+            "The temperature is not reaching "
+            "the setpoint."
+        ),
+        resolved_query=(
+            "Original engineer request:\n"
+            "It's not working.\n\n"
+            "Engineer clarification:\n"
+            "The temperature is not reaching "
+            "the setpoint."
+        ),
+        clarification_count=1,
+    )
+
+    initial = graph.initial_state
+
+    assert initial is not None
+
+    assert (
+        initial["raw_query"]
+        == "The temperature is not reaching the setpoint."
+    )
+
+    assert (
+        initial["equipment_model"]
+        == "thermal_station"
+    )
+
+    assert (
+        initial["clarification_response"]
+        == (
+            "The temperature is not reaching "
+            "the setpoint."
+        )
+    )
+
+    assert (
+        "It's not working."
+        in initial["resolved_query"]
+    )
+
+    assert (
+        initial["clarification_count"]
+        == 1
+    )
+
+    assert (
+        result["clarification_count"]
+        == 1
+    )

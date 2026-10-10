@@ -16,7 +16,11 @@ def stub_graph(monkeypatch):
         "final_answer": "Check the fuse.",
         "retrieved_chunks": [],
     }
-    monkeypatch.setattr(chat_service, "run_graph", lambda message, equipment_model: dict(state))
+    monkeypatch.setattr(
+        chat_service,
+        "run_graph", 
+        lambda message, equipment_model, **kwargs: dict(state)
+    )
 
 
 def chat(message="The unit will not start"):
@@ -103,7 +107,12 @@ def test_monitoring_can_skip_the_integrity_check_and_limit_the_runs():
 
 
 def test_monitoring_raises_alerts_for_an_error_spike(monkeypatch):
-    def failing(message, equipment_model):
+
+    def failing(
+        message,
+        equipment_model,
+        **kwargs,
+    ):
         raise RuntimeError("provider down")
 
     monkeypatch.setattr(chat_service, "run_graph", failing)

@@ -16,6 +16,16 @@ import hashlib
 import logging
 import time
 
+from app.services.clarification_store import (
+    PendingClarification,
+    clear_pending,
+    get_pending,
+    set_pending,
+)
+from asa.agents.clarification import (
+    resolve_clarification,
+)
+
 from app.schemas.response import ChatResponse, SafetyInfo, TraceStep
 from app.services.graph_runner import run_graph
 from asa.components import logging_sub
@@ -156,17 +166,104 @@ def _handle_chat(message: str, conversation_id: str, equipment_model: str | None
 
     # Redact emails, card numbers and secrets before the text goes to the model provider.
     safe_message = logging_sub._redact(message)
+
+    pending = get_pending(
+        conversation_id
+    )
+
+    clarification_response = None
+    resolved_query = None
+    clarification_count = 0
+
+    if pending is not None:
+
+        # Equipment identity must remain stable across the
+        # clarification exchange.
+        if (
+            pending.equipment_model
+            and equipment_model
+            and pending.equipment_model
+            != equipment_model
+        ):
+            clear_pending(
+                conversation_id
+            )
+
+            pending = None
+
+        else:
+            clarification_response = (
+                safe_message
+            )
+
+            clarification_count = (
+                pending.clarification_count
+                + 1
+            )
+
+            resolved_query = resolve_clarification(
+                original_query=
+                    pending.original_query,
+
+                clarification_response=
+                    clarification_response,
+            )
+
     run_id = logging_sub.start_run(safe_message)
 
     try:
         with tag_run(run_id):
-            state = run_graph(safe_message, equipment_model)
+            state = run_graph(
+                safe_message,
+                equipment_model,
+                clarification_response=
+                    clarification_response,
+                resolved_query=
+                    resolved_query,
+                clarification_count=
+                    clarification_count,
+            )
     except Exception as exc:
         # OpenAI error, missing index, bad key... Never leak details to the user.
         logger.error("chat failed: run_id=%s error=%s: %s", run_id, type(exc).__name__, exc)
         return _unavailable(run_id, conversation_id, equipment_model, started, type(exc).__name__)
 
     status = _agent_status(state)
+    
+    if status == "clarification":
+
+        original_query = (
+            pending.original_query
+            if pending is not None
+            else safe_message
+        )
+
+        set_pending(
+            conversation_id,
+            PendingClarification(
+                original_query=
+                    original_query,
+
+                clarification_question=
+                    state.get(
+                        "clarification_question"
+                    )
+                    or "",
+
+                equipment_model=
+                    equipment_model,
+
+                clarification_count=
+                    clarification_count,
+            ),
+        )
+
+    else:
+
+        clear_pending(
+            conversation_id
+        )
+
     answer = state.get("final_answer") or state.get("clarification_question") or ""
     if not answer:
         logger.error("chat produced no answer: run_id=%s", run_id)

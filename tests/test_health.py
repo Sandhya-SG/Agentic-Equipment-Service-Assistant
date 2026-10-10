@@ -23,7 +23,10 @@ def test_chat_route(monkeypatch):
     monkeypatch.setattr(
         chat_service,
         "run_graph",
-        lambda message, equipment_model: {"request_status": "READY", "final_answer": "hi there"},
+        lambda message, equipment_model, **kwargs: {
+            "request_status": "READY",
+            "final_answer": "hi there",
+        }
     )
     response = client.post(
         "/api/chat",
