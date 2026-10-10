@@ -13,6 +13,7 @@ It prints requests per second, median and 95th-percentile latency and the error 
 backend to re-walk its audit chains (/api/monitoring?verify=true). Each pod writes its own chain, so
 the check reaches whichever pod answers; run it a few times after a test, or read the pod logs.
 """
+
 import argparse
 import json
 import statistics
@@ -37,9 +38,7 @@ def call(url: str, mode: str, n: int, timeout: float) -> tuple[bool, float]:
             req = urllib.request.Request(f"{url}/health")
         else:
             body = json.dumps({"message": QUESTIONS[n % len(QUESTIONS)], "conversation_id": f"load-{n}"}).encode()
-            req = urllib.request.Request(
-                f"{url}/api/chat", data=body, headers={"Content-Type": "application/json"}
-            )
+            req = urllib.request.Request(f"{url}/api/chat", data=body, headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             resp.read()
             ok = resp.status == 200
