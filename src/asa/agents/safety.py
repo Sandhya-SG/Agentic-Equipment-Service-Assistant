@@ -13,6 +13,7 @@ from asa.agents.rag import AgenticRAGAgent
 from asa.graph.state import (
     AgentState,
     Chunk,
+    SafetyClaim,
 )
 
 
@@ -155,23 +156,35 @@ def _validate_safety_items(
     list[str],
     list[str],
     list[str],
+    list[SafetyClaim],
 ]:
     """
     Validate Safety Agent structured claims against the
     retrieved AEM manual evidence.
 
-    A claim must be explicitly supported by the evidence
-    and applicable to the engineer's request.
+    Each candidate claim is validated once against all
+    retrieved evidence. The validator may identify the
+    retrieved chunks that explicitly support the claim.
+
+    Returned chunk IDs are verified by application code;
+    unknown or invented IDs are discarded.
     """
 
     context = _format_safety_context(
         chunks
     )
 
+    valid_chunk_ids = {
+        chunk.chunk_id
+        for chunk in chunks
+    }
+
+    safety_claims: list[SafetyClaim] = []
+
     def validate_item(
         item: str,
         item_type: str,
-    ) -> bool:
+    ) -> list[str]:
 
         prompt = f"""
 You are validating one structured safety claim against
@@ -196,38 +209,58 @@ Determine whether the candidate claim is BOTH:
 2. APPLICABLE to the engineer's requested activity,
    condition, or safety question.
 
+If supported, identify ONLY the Chunk IDs of the supplied
+evidence passages that directly support this claim.
+
 Important rules:
 
 - Mere keyword overlap is not sufficient.
 - Do not use general engineering knowledge.
-- Do not infer requirements that the manual does not state.
-- Do not approve an item merely because it appears somewhere
-  in the retrieved documentation.
-- The item must be relevant to the engineer's actual request.
+- Do not infer requirements the manual does not state.
+- Do not approve an item merely because it appears
+  somewhere in the retrieved documentation.
+- The item must be relevant to the engineer's actual
+  request.
+- Return only Chunk IDs that appear in the supplied
+  evidence.
+- Do not invent Chunk IDs.
 
 For HAZARD:
 The evidence must explicitly identify the hazard and it
 must be relevant to the requested activity or condition.
 
 For PPE:
-The evidence must explicitly identify the PPE and establish
-that it applies to the relevant activity or condition.
-PPE listed only for a different activity such as installation
-or decommissioning is not automatically applicable to
-servicing, troubleshooting, or another task.
+The evidence must explicitly identify the PPE and
+establish that it applies to the relevant activity or
+condition.
+
+PPE listed only for a different activity such as
+installation or decommissioning is not automatically
+applicable to servicing, troubleshooting, or another
+task.
 
 For REQUIRED_CONTROL:
 The evidence must explicitly support the control or
 prerequisite as applicable to the request.
-Do not convert recommendations into mandatory requirements.
 
-Return exactly:
+Do not convert recommendations into mandatory
+requirements.
 
-SUPPORTED
+Return VALID JSON only in exactly this structure:
 
-or
+{{
+  "supported": true | false,
+  "supporting_chunk_ids": [
+    "<chunk_id>"
+  ]
+}}
 
-UNSUPPORTED
+If unsupported, return:
+
+{{
+  "supported": false,
+  "supporting_chunk_ids": []
+}}
 """
 
         response = client.chat.completions.create(
@@ -237,7 +270,8 @@ UNSUPPORTED
                     "role": "system",
                     "content": (
                         "You validate safety claims strictly "
-                        "against supplied AEM manual evidence."
+                        "against supplied AEM manual evidence "
+                        "and return valid JSON."
                     ),
                 },
                 {
@@ -246,48 +280,117 @@ UNSUPPORTED
                 },
             ],
             temperature=0,
+            response_format={
+                "type": "json_object"
+            },
         )
 
-        verdict = (
-            response.choices[0]
-            .message.content
-            .strip()
-            .upper()
+        try:
+            validation = json.loads(
+                response.choices[0]
+                .message.content
+                .strip()
+            )
+        except (
+            json.JSONDecodeError,
+            AttributeError,
+            TypeError,
+        ):
+            return []
+
+        if validation.get("supported") is not True:
+            return []
+
+        returned_ids = validation.get(
+            "supporting_chunk_ids",
+            [],
         )
 
-        return verdict == "SUPPORTED"
+        if not isinstance(
+            returned_ids,
+            list,
+        ):
+            return []
 
-    valid_hazards = [
-        item
-        for item in hazards
-        if validate_item(
-            item,
-            "HAZARD",
-        )
-    ]
+        # Trust boundary:
+        # only retrieved chunk IDs are accepted.
+        supported_ids = []
 
-    valid_ppe = [
-        item
-        for item in ppe_required
-        if validate_item(
-            item,
-            "PPE",
-        )
-    ]
+        for chunk_id in returned_ids:
 
-    valid_controls = [
-        item
-        for item in required_controls
-        if validate_item(
-            item,
-            "REQUIRED_CONTROL",
-        )
-    ]
+            if not isinstance(
+                chunk_id,
+                str,
+            ):
+                continue
+
+            if (
+                chunk_id in valid_chunk_ids
+                and chunk_id not in supported_ids
+            ):
+                supported_ids.append(
+                    chunk_id
+                )
+
+        # A claim is not grounded unless at least one
+        # valid retrieved chunk supports it.
+        return supported_ids
+
+    def validate_group(
+        items: list[str],
+        category: str,
+        item_type: str,
+    ) -> list[str]:
+
+        valid_items = []
+
+        for item in items:
+
+            ids = validate_item(
+                item,
+                item_type,
+            )
+
+            if not ids:
+                continue
+
+            valid_items.append(
+                item
+            )
+
+            safety_claims.append(
+                SafetyClaim(
+                    category=category,
+                    text=item,
+                    supporting_chunk_ids=ids,
+                )
+            )
+
+        return valid_items
+
+    valid_hazards = validate_group(
+        hazards,
+        "hazard",
+        "HAZARD",
+    )
+
+    valid_ppe = validate_group(
+        ppe_required,
+        "ppe",
+        "PPE",
+    )
+
+    valid_controls = validate_group(
+        required_controls,
+        "control",
+        "REQUIRED_CONTROL",
+    )
 
     return (
         valid_hazards,
         valid_ppe,
         valid_controls,
+        safety_claims,
     )
 
 
@@ -522,6 +625,9 @@ def safety_node(
                 [],
 
             "ppe_required":
+                [],
+
+            "safety_claims":
                 [],
 
             "safety_reason":
@@ -800,6 +906,7 @@ Return VALID JSON only in this exact structure:
         hazards,
         ppe_required,
         required_controls,
+        safety_claims,
     ) = _validate_safety_items(
         question=question,
         chunks=retrieved_chunks,
@@ -930,6 +1037,9 @@ Return VALID JSON only in this exact structure:
 
         "safety_reason":
             reason,
+
+        "safety_claims":
+            safety_claims,
 
         # Only ESCALATE requires human escalation.
         # HALT means the Safety Agent has enough

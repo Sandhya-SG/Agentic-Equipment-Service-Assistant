@@ -59,6 +59,23 @@ class Step:
 
 
 @dataclass
+class SafetyClaim:
+    """One validated safety claim tied to its supporting evidence."""
+
+    category: Literal[
+        "hazard",
+        "ppe",
+        "control",
+    ]
+
+    text: str
+
+    supporting_chunk_ids: list[str] = field(
+        default_factory=list
+    )
+
+
+@dataclass
 class Citation:
     """A user-facing citation pointing to the exact supporting text."""
 
@@ -76,6 +93,14 @@ class TraceEvent:
     action: str
     timestamp: str
     detail: dict = field(default_factory=dict)
+
+
+@dataclass
+class GroundedSafetyItem:
+    text: str
+    supporting_chunk_ids: list[str] = field(
+        default_factory=list
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -130,6 +155,7 @@ class AgentState(TypedDict, total=False):
     hazards: list[str]
     ppe_required: list[str]
     safety_reason: str
+    safety_claims: list[SafetyClaim]
 
     # --- Explanation Module writes ---
     confidence: float
@@ -189,6 +215,7 @@ def new_state(
         safety_verdict="allow",
         hazards=[],
         ppe_required=[],
+        safety_claims=[],
 
         confidence=0.0,
         citations=[],

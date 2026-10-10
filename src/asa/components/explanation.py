@@ -177,17 +177,80 @@ def _claims_from_markers(answer: str, chunks: list) -> list[tuple[str, list, boo
     return claims
 
 
-def _claims_from_structure(state: dict, chunks: list) -> list[tuple[str, list, bool]]:
-    """Diagnostic output links every cause and step to the passages that support it."""
-    by_id = {_get(c, "chunk_id"): c for c in chunks}
+def _claims_from_structure(
+    state: dict,
+    chunks: list,
+) -> list[tuple[str, list, bool]]:
+    """
+    Build claims from specialist outputs that explicitly
+    identify their supporting retrieved chunks.
+
+    Diagnostic uses RankedCause and Step.
+    Safety uses SafetyClaim.
+    """
+
+    by_id = {
+        _get(chunk, "chunk_id"): chunk
+        for chunk in chunks
+    }
+
     claims = []
-    for item, field in [(c, "cause") for c in state.get("root_causes") or []] + [
-        (s, "action") for s in state.get("troubleshooting_steps") or []
-    ]:
-        text = _get(item, field, "")
-        preferred = [by_id[i] for i in (_get(item, "supporting_chunk_ids", []) or []) if i in by_id]
+
+    structured_items = (
+        [
+            (cause, "cause")
+            for cause
+            in state.get(
+                "root_causes"
+            ) or []
+        ]
+        + [
+            (step, "action")
+            for step
+            in state.get(
+                "troubleshooting_steps"
+            ) or []
+        ]
+        + [
+            (claim, "text")
+            for claim
+            in state.get(
+                "safety_claims"
+            ) or []
+        ]
+    )
+
+    for item, field in structured_items:
+
+        text = _get(
+            item,
+            field,
+            "",
+        )
+
+        preferred = [
+            by_id[chunk_id]
+            for chunk_id
+            in (
+                _get(
+                    item,
+                    "supporting_chunk_ids",
+                    [],
+                )
+                or []
+            )
+            if chunk_id in by_id
+        ]
+
         if text:
-            claims.append((_clean_claim(text), preferred, False))
+            claims.append(
+                (
+                    _clean_claim(text),
+                    preferred,
+                    False,
+                )
+            )
+
     return claims
 
 

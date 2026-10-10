@@ -1,5 +1,6 @@
 """Unit tests for Safety Agent grounding validation."""
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -102,11 +103,23 @@ def test_validator_retains_supported_and_removes_unsupported_items(
 
             if candidate_block in prompt:
                 return _response(
-                    "SUPPORTED"
+                    json.dumps(
+                        {
+                            "supported": True,
+                            "supporting_chunk_ids": [
+                                "safety_p19"
+                            ],
+                        }
+                    )
                 )
 
         return _response(
-            "UNSUPPORTED"
+            json.dumps(
+                {
+                    "supported": False,
+                    "supporting_chunk_ids": [],
+                }
+            )
         )
 
 
@@ -138,6 +151,7 @@ def test_validator_retains_supported_and_removes_unsupported_items(
         valid_hazards,
         valid_ppe,
         valid_controls,
+        safety_claims,
     ) = safety._validate_safety_items(
         question=(
             "What safety precautions apply "
@@ -162,6 +176,37 @@ def test_validator_retains_supported_and_removes_unsupported_items(
             "and power off before servicing."
         ),
     ]
+
+    assert len(safety_claims) == 3
+
+    claims_by_text = {
+        claim.text: claim
+        for claim in safety_claims
+    }
+
+    assert (
+        claims_by_text[
+            "Electrical Hazards"
+        ].supporting_chunk_ids
+        == ["safety_p19"]
+    )
+
+    assert (
+        claims_by_text[
+            "Only qualified personnel should service this equipment."
+        ].supporting_chunk_ids
+        == ["safety_p19"]
+    )
+
+    assert (
+        claims_by_text[
+            (
+                "Perform equipment or module power down "
+                "and power off before servicing."
+            )
+        ].supporting_chunk_ids
+        == ["safety_p19"]
+    )
 
 
 def test_validator_rejects_ppe_from_unrelated_activity(
@@ -192,7 +237,12 @@ def test_validator_rejects_ppe_from_unrelated_activity(
         # installation/decommissioning PPE is not established
         # as applicable to an interlock-bypass request.
         return _response(
-            "UNSUPPORTED"
+            json.dumps(
+                {
+                    "supported": False,
+                    "supporting_chunk_ids": [],
+                }
+            )
         )
 
     monkeypatch.setattr(
@@ -205,6 +255,7 @@ def test_validator_rejects_ppe_from_unrelated_activity(
         valid_hazards,
         valid_ppe,
         valid_controls,
+        safety_claims,
     ) = safety._validate_safety_items(
         question=(
             "Can I bypass the safety interlock?"
@@ -224,6 +275,8 @@ def test_validator_rejects_ppe_from_unrelated_activity(
     assert valid_ppe == []
 
     assert valid_controls == []
+
+    assert safety_claims == []
 
 
 def test_supported_allow_verdict_is_retained(
@@ -439,26 +492,26 @@ def test_safety_node_does_not_expose_unvalidated_llm_reason(
             "messages"
         ][1]["content"]
 
-        if (
-            "Return VALID JSON only"
-            in prompt
-        ):
-            import json
-
-            return _response(
-                json.dumps(
-                    safety_json
-                )
-            )
-
+        # 1. Structured safety-claim grounding.
+        #
+        # Check this BEFORE the generic "Return VALID JSON"
+        # condition because this prompt also requests JSON.
         if (
             "validating one structured safety claim"
             in prompt
         ):
             return _response(
-                "SUPPORTED"
+                json.dumps(
+                    {
+                        "supported": True,
+                        "supporting_chunk_ids": [
+                            EVIDENCE.chunk_id
+                        ],
+                    }
+                )
             )
 
+        # 2. Final safety-verdict grounding.
         if (
             "validating a proposed equipment safety verdict"
             in prompt
@@ -467,8 +520,21 @@ def test_safety_node_does_not_expose_unvalidated_llm_reason(
                 "SUPPORTED"
             )
 
+        # 3. Initial Safety Agent generation.
+        #
+        # Keep this generic JSON check LAST.
+        if (
+            "Return VALID JSON only"
+            in prompt
+        ):
+            return _response(
+                json.dumps(
+                    safety_json
+                )
+            )
+
         raise AssertionError(
-            "Unexpected Safety Agent model call."
+            f"Unexpected Safety Agent model call:\n{prompt}"
         )
 
     monkeypatch.setattr(

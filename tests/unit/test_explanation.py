@@ -4,7 +4,13 @@ import random
 import pytest
 
 from asa.components.explanation import explain
-from asa.graph.state import Chunk, RankedCause, Step
+
+from asa.graph.state import (
+    Chunk,
+    RankedCause,
+    SafetyClaim,
+    Step,
+)
 
 
 def chunk(chunk_id, page, section, text, source="aem_thermal_station.pdf"):
@@ -256,6 +262,89 @@ def test_diagnostic_claims_use_their_own_supporting_passages():
     assert result["claims_checked"] == 2
     assert result["citations"] and all(c["chunk_id"] == "c26" for c in result["citations"])
     assert "root cause is not confirmed" in result["decision"]["why"]
+
+
+def test_safety_claims_use_only_their_supporting_chunks():
+    supported = Chunk(
+        chunk_id="s19",
+        doc_id="manual",
+        section_id="2.2.2",
+        revision="0",
+        equipment_model="thermal_station",
+        text=(
+            "Electrical Hazards: Hazardous voltages may "
+            "exist and can cause electric shock or burns."
+        ),
+        score=1.0,
+        source_file="manual.pdf",
+        page=19,
+        section_title="General Safety Guidelines",
+    )
+
+    unrelated = Chunk(
+        chunk_id="s22",
+        doc_id="manual",
+        section_id="2.2.3",
+        revision="0",
+        equipment_model="thermal_station",
+        text=(
+            "Standard Personal Protective Equipment "
+            "is required for installation."
+        ),
+        score=1.0,
+        source_file="manual.pdf",
+        page=22,
+        section_title="Personal Safety Equipment",
+    )
+
+    state = {
+        "current_step": "safety",
+        "final_answer": (
+            "Safety decision: HALT\n\n"
+            "Electrical Hazards: Hazardous voltages "
+            "may exist and can cause electric shock "
+            "or burns."
+        ),
+        "retrieved_chunks": [
+            supported,
+            unrelated,
+        ],
+        "safety_claims": [
+            SafetyClaim(
+                category="hazard",
+                text=(
+                    "Electrical Hazards: Hazardous voltages "
+                    "may exist and can cause electric shock "
+                    "or burns."
+                ),
+                supporting_chunk_ids=[
+                    "s19",
+                ],
+            )
+        ],
+        "sufficiency": True,
+        "retry_count": 0,
+        "escalated": False,
+    }
+
+    result = explain(
+        state,
+        "halted",
+    )
+
+    assert result["citations"]
+
+    assert all(
+        citation["chunk_id"] == "s19"
+        for citation
+        in result["citations"]
+    )
+
+    assert all(
+        citation["page"] == 19
+        for citation
+        in result["citations"]
+    )
 
 
 # --------------------------------------------------------------------------- #
