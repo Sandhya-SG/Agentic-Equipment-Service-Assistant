@@ -29,6 +29,25 @@ TESTS = [
 
     {
         "name":
+            "TEST 2 - SPECIFIC MAINTENANCE DOCUMENTATION REQUEST",
+
+        "state": {
+            "raw_query":
+                (
+                    "What are the semi annual "
+                    "preventive maintenance checks?"
+                ),
+
+            "equipment_model":
+                THERMAL_STATION,
+        },
+
+        "expected":
+            "READY",
+    },
+
+    {
+        "name":
             "TEST 2 - AMBIGUOUS SYMPTOM",
 
         "state": {

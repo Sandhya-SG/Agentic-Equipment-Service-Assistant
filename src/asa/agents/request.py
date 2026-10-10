@@ -195,6 +195,41 @@ Important rules:
 6. Ask for clarification only when the missing detail
    prevents meaningful routing or retrieval.
 
+6A. DOCUMENTATION REQUESTS SHOULD PROCEED WHEN THE
+    DOCUMENT TOPIC IS ALREADY IDENTIFIABLE.
+
+    If the engineer asks for documented information about
+    an identifiable maintenance interval, procedure,
+    inspection, check, component, error, alarm, safety
+    topic, operating condition, or manual topic, return
+    READY when that information is sufficient to form a
+    meaningful document search.
+
+    Do not ask the engineer to specify which checks,
+    procedures, requirements, or details they mean when
+    those are precisely what they are asking the manual
+    to provide.
+
+    Examples:
+
+    "What are the semi annual preventive maintenance
+    checks?"
+    -> READY
+
+    "What checks are required during preventive
+    maintenance?"
+    -> READY
+
+    "What does the manual say about the safety
+    interlock?"
+    -> READY
+
+    Clarification is appropriate only when the subject
+    itself cannot be identified, for example:
+
+    "What checks should I do?"
+    -> CLARIFY
+
 7. SAFETY-CRITICAL INTENT HAS PRIORITY OVER
    CLARIFICATION.
 
