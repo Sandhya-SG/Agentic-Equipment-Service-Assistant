@@ -13,3 +13,7 @@ data:
   # The frontend reaches the backend through its Service name.
   BACKEND_URL: "http://backend:8000"
   BACKEND_TIMEOUT: "120"
+  # The embedding model is baked into the image. Offline mode stops the Hugging Face lookups
+  # that stall startup (and fail the startup probe) when the cluster has no DNS or internet.
+  HF_HUB_OFFLINE: "1"
+  TRANSFORMERS_OFFLINE: "1"
