@@ -145,6 +145,269 @@ Return only the search query.
     )
 
 
+def _validate_safety_items(
+    question: str,
+    chunks: list[Chunk],
+    hazards: list[str],
+    ppe_required: list[str],
+    required_controls: list[str],
+) -> tuple[
+    list[str],
+    list[str],
+    list[str],
+]:
+    """
+    Validate Safety Agent structured claims against the
+    retrieved AEM manual evidence.
+
+    A claim must be explicitly supported by the evidence
+    and applicable to the engineer's request.
+    """
+
+    context = _format_safety_context(
+        chunks
+    )
+
+    def validate_item(
+        item: str,
+        item_type: str,
+    ) -> bool:
+
+        prompt = f"""
+You are validating one structured safety claim against
+authoritative AEM manual evidence.
+
+Engineer request:
+{question}
+
+Claim type:
+{item_type}
+
+Candidate claim:
+{item}
+
+Retrieved AEM manual evidence:
+{context}
+
+Determine whether the candidate claim is BOTH:
+
+1. EXPLICITLY SUPPORTED by the supplied evidence; and
+
+2. APPLICABLE to the engineer's requested activity,
+   condition, or safety question.
+
+Important rules:
+
+- Mere keyword overlap is not sufficient.
+- Do not use general engineering knowledge.
+- Do not infer requirements that the manual does not state.
+- Do not approve an item merely because it appears somewhere
+  in the retrieved documentation.
+- The item must be relevant to the engineer's actual request.
+
+For HAZARD:
+The evidence must explicitly identify the hazard and it
+must be relevant to the requested activity or condition.
+
+For PPE:
+The evidence must explicitly identify the PPE and establish
+that it applies to the relevant activity or condition.
+PPE listed only for a different activity such as installation
+or decommissioning is not automatically applicable to
+servicing, troubleshooting, or another task.
+
+For REQUIRED_CONTROL:
+The evidence must explicitly support the control or
+prerequisite as applicable to the request.
+Do not convert recommendations into mandatory requirements.
+
+Return exactly:
+
+SUPPORTED
+
+or
+
+UNSUPPORTED
+"""
+
+        response = client.chat.completions.create(
+            model=SAFETY_MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You validate safety claims strictly "
+                        "against supplied AEM manual evidence."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": prompt,
+                },
+            ],
+            temperature=0,
+        )
+
+        verdict = (
+            response.choices[0]
+            .message.content
+            .strip()
+            .upper()
+        )
+
+        return verdict == "SUPPORTED"
+
+    valid_hazards = [
+        item
+        for item in hazards
+        if validate_item(
+            item,
+            "HAZARD",
+        )
+    ]
+
+    valid_ppe = [
+        item
+        for item in ppe_required
+        if validate_item(
+            item,
+            "PPE",
+        )
+    ]
+
+    valid_controls = [
+        item
+        for item in required_controls
+        if validate_item(
+            item,
+            "REQUIRED_CONTROL",
+        )
+    ]
+
+    return (
+        valid_hazards,
+        valid_ppe,
+        valid_controls,
+    )
+
+
+def _validate_safety_verdict(
+    question: str,
+    chunks: list[Chunk],
+    candidate_verdict: str,
+    validated_controls: list[str],
+) -> str:
+    """
+    Validate the proposed Safety Agent verdict against
+    retrieved AEM manual evidence.
+
+    A verdict that cannot be grounded conservatively is
+    converted to ESCALATE.
+    """
+
+    context = _format_safety_context(
+        chunks
+    )
+
+    controls_text = (
+        "\n".join(
+            f"- {item}"
+            for item in validated_controls
+        )
+        or "NONE"
+    )
+
+    prompt = f"""
+You are validating a proposed equipment safety verdict
+against authoritative AEM manual evidence.
+
+Engineer request:
+{question}
+
+Proposed verdict:
+{candidate_verdict.upper()}
+
+Validated documented controls:
+{controls_text}
+
+Retrieved AEM manual evidence:
+{context}
+
+Determine whether the proposed verdict is explicitly
+supported by the supplied evidence.
+
+Verdict meanings:
+
+ALLOW:
+The request is informational about documented safety
+requirements, OR the requested activity is supported
+when the validated documented controls are followed.
+
+HALT:
+The engineer explicitly proposes an action that conflicts
+with a documented safety requirement, OR describes a
+condition for which the documentation requires operation
+or work to stop.
+
+ESCALATE:
+The documentation is insufficient to make a grounded
+safety determination.
+
+Important rules:
+
+- Use ONLY the supplied AEM evidence.
+- Do not use general engineering knowledge.
+- Do not infer permission from silence.
+- Absence of a documented prohibition does NOT establish
+  ALLOW.
+- A safety control must not be weakened.
+- If the evidence is insufficient or ambiguous, the safe
+  result is ESCALATE.
+- Do not change HALT to ALLOW merely because a bypass
+  procedure is absent.
+- Consider the engineer's actual requested action together
+  with the documented requirements.
+
+Return exactly:
+
+SUPPORTED
+
+or
+
+UNSUPPORTED
+"""
+
+    response = client.chat.completions.create(
+        model=SAFETY_MODEL,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You validate equipment safety verdicts "
+                    "strictly against supplied AEM manual "
+                    "evidence."
+                ),
+            },
+            {
+                "role": "user",
+                "content": prompt,
+            },
+        ],
+        temperature=0,
+    )
+
+    validation = (
+        response.choices[0]
+        .message.content
+        .strip()
+        .upper()
+    )
+
+    if validation == "SUPPORTED":
+        return candidate_verdict
+
+    return "escalate"
+
 
 def safety_node(
     state: AgentState,
@@ -524,6 +787,65 @@ Return VALID JSON only in this exact structure:
         )
         if str(item).strip()
     ]
+
+    # --------------------------------------------------
+    # Safety grounding validation
+    # --------------------------------------------------
+
+    print(
+        "\n[Safety Grounding Validation]"
+    )
+
+    (
+        hazards,
+        ppe_required,
+        required_controls,
+    ) = _validate_safety_items(
+        question=question,
+        chunks=retrieved_chunks,
+        hazards=hazards,
+        ppe_required=ppe_required,
+        required_controls=required_controls,
+    )
+
+    verdict = _validate_safety_verdict(
+        question=question,
+        chunks=retrieved_chunks,
+        candidate_verdict=verdict,
+        validated_controls=required_controls,
+    )
+
+    # --------------------------------------------------
+    # Construct conservative validated reason
+    #
+    # Do not expose the Safety LLM's original free-text
+    # reason after grounding validation.
+    # --------------------------------------------------
+
+    if verdict == "allow":
+
+        reason = (
+            "The retrieved AEM manual evidence provides "
+            "documented safety requirements applicable "
+            "to this request. Follow the validated "
+            "controls below."
+        )
+
+    elif verdict == "halt":
+
+        reason = (
+            "The requested action conflicts with a "
+            "documented safety requirement in the "
+            "retrieved AEM manual evidence."
+        )
+
+    else:
+
+        reason = (
+            "The available AEM manual evidence is "
+            "insufficient to make a grounded safety "
+            "determination. Human review is required."
+        )
 
     # --------------------------------------------------
     # Build engineer-facing response
