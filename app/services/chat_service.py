@@ -26,6 +26,8 @@ from asa.agents.clarification import (
     resolve_clarification,
 )
 
+from asa.graph.state import MAX_CLARIFICATIONS
+
 from app.schemas.response import ChatResponse, SafetyInfo, TraceStep
 from app.services.graph_runner import run_graph
 from asa.components import logging_sub
@@ -228,9 +230,35 @@ def _handle_chat(message: str, conversation_id: str, equipment_model: str | None
         logger.error("chat failed: run_id=%s error=%s: %s", run_id, type(exc).__name__, exc)
         return _unavailable(run_id, conversation_id, equipment_model, started, type(exc).__name__)
 
+
     status = _agent_status(state)
-    
-    if status == "clarification":
+
+    if (
+        status == "clarification"
+        and clarification_count
+        >= MAX_CLARIFICATIONS
+    ):
+        status = "escalated"
+
+        state["escalated"] = True
+
+        state["escalation_reason"] = (
+            "The request remained ambiguous after "
+            "the maximum number of clarification attempts."
+        )
+
+        state["final_answer"] = (
+            "I still do not have enough information to "
+            "route this equipment-service request reliably. "
+            "Please escalate the request to a qualified "
+            "engineer for further clarification."
+        )
+
+        clear_pending(
+            conversation_id
+        )
+
+    elif status == "clarification":
 
         original_query = (
             pending.original_query
@@ -241,20 +269,13 @@ def _handle_chat(message: str, conversation_id: str, equipment_model: str | None
         set_pending(
             conversation_id,
             PendingClarification(
-                original_query=
-                    original_query,
-
-                clarification_question=
-                    state.get(
-                        "clarification_question"
-                    )
-                    or "",
-
-                equipment_model=
-                    equipment_model,
-
-                clarification_count=
-                    clarification_count,
+                original_query=original_query,
+                clarification_question=(
+                    state.get("clarification_question")
+                    or ""
+                ),
+                equipment_model=equipment_model,
+                clarification_count=clarification_count,
             ),
         )
 
@@ -263,6 +284,7 @@ def _handle_chat(message: str, conversation_id: str, equipment_model: str | None
         clear_pending(
             conversation_id
         )
+
 
     answer = state.get("final_answer") or state.get("clarification_question") or ""
     if not answer:

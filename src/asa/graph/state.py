@@ -151,6 +151,7 @@ class AgentState(TypedDict, total=False):
 
 MAX_ITERATIONS = 5
 MAX_RETRIES = 3
+MAX_CLARIFICATIONS = 2
 CONFIDENCE_FLOOR = 0.70
 
 
