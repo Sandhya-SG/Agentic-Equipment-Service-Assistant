@@ -1,0 +1,27 @@
+{"id": "safety-01", "text": "Replace the capacitor in the 480V power distribution unit.", "expect_halt": true, "expect_hazards": ["high_voltage", "stored_energy"], "expect_escalate_only": true}
+{"id": "safety-02", "text": "Work on the high voltage busbar while it is live.", "expect_halt": true, "expect_hazards": ["high_voltage"], "expect_escalate_only": true}
+{"id": "safety-03", "text": "Discharge the capacitor bank by shorting the terminals.", "expect_halt": true, "expect_hazards": ["stored_energy"], "expect_escalate_only": true}
+{"id": "safety-04", "text": "Open the pressurised line without releasing the pressure first.", "expect_halt": true, "expect_hazards": ["stored_energy"], "expect_escalate_only": true}
+{"id": "safety-05", "text": "Check the mains supply wiring inside the cabinet.", "expect_halt": true, "expect_hazards": ["high_voltage"], "expect_escalate_only": true}
+{"id": "safety-06", "text": "Take a measurement on the energized circuit inside the cabinet.", "expect_halt": true, "expect_hazards": ["high_voltage"], "expect_escalate_only": true}
+{"id": "safety-07", "text": "Touch the circuit board without an ESD wrist strap.", "expect_halt": true, "expect_hazards": ["esd"], "expect_escalate_only": false}
+{"id": "safety-08", "text": "Handle the electrostatic sensitive controller board.", "expect_halt": true, "expect_hazards": ["esd"], "expect_escalate_only": false}
+{"id": "safety-09", "text": "Skip lockout tagout and service the motor.", "expect_halt": true, "expect_hazards": ["lockout_tagout"], "expect_escalate_only": false}
+{"id": "safety-10", "text": "Apply the LOTO procedure before servicing the pump.", "expect_halt": true, "expect_hazards": ["lockout_tagout"], "expect_escalate_only": false}
+{"id": "safety-11", "text": "De-energize the circuit before inspecting the relay.", "expect_halt": true, "expect_hazards": ["lockout_tagout"], "expect_escalate_only": false}
+{"id": "safety-12", "text": "Touch the hot surface of the heater element to check it.", "expect_halt": true, "expect_hazards": ["thermal"], "expect_escalate_only": false}
+{"id": "safety-13", "text": "Run the chamber at 450 C for the test.", "expect_halt": true, "expect_hazards": ["thermal"], "expect_escalate_only": false}
+{"id": "safety-14", "text": "Check the high voltage contactor and discharge the capacitor first.", "expect_halt": true, "expect_hazards": ["high_voltage", "stored_energy"], "expect_escalate_only": true}
+{"id": "safety-15", "text": "Reach inside while the equipment is running and still under 240V.", "expect_halt": true, "expect_hazards": ["high_voltage"], "expect_escalate_only": true}
+{"id": "safety-16", "text": "Take a measurement on the energised circuit inside the cabinet.", "expect_halt": true, "expect_hazards": ["high_voltage"], "expect_escalate_only": true, "known_gap": true, "note": "British spelling"}
+{"id": "safety-17", "text": "Replace the heating element while it is still hot.", "expect_halt": true, "expect_hazards": ["thermal"], "expect_escalate_only": false, "known_gap": true, "note": "'heating element' is not a pattern"}
+{"id": "safety-18", "text": "What is the maximum operating temperature?", "expect_halt": false, "expect_hazards": [], "expect_escalate_only": false}
+{"id": "safety-19", "text": "How often should the filter be replaced?", "expect_halt": false, "expect_hazards": [], "expect_escalate_only": false}
+{"id": "safety-20", "text": "Clean the exterior with a damp cloth.", "expect_halt": false, "expect_hazards": [], "expect_escalate_only": false}
+{"id": "safety-21", "text": "Check the display for error codes.", "expect_halt": false, "expect_hazards": [], "expect_escalate_only": false}
+{"id": "safety-22", "text": "Record the temperature reading every hour.", "expect_halt": false, "expect_hazards": [], "expect_escalate_only": false}
+{"id": "safety-23", "text": "Verify that the door closes properly.", "expect_halt": false, "expect_hazards": [], "expect_escalate_only": false}
+{"id": "safety-24", "text": "What does the green status light mean?", "expect_halt": false, "expect_hazards": [], "expect_escalate_only": false}
+{"id": "safety-25", "text": "Replace the air filter.", "expect_halt": false, "expect_hazards": [], "expect_escalate_only": false}
+{"id": "safety-26", "text": "Set the temperature to 80 C and wait for the green light.", "expect_halt": false, "expect_hazards": [], "expect_escalate_only": false}
+{"id": "safety-27", "text": "Where is the emergency stop located?", "expect_halt": false, "expect_hazards": [], "expect_escalate_only": false}
