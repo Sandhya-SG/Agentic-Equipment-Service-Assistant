@@ -4,7 +4,6 @@ import random
 import pytest
 
 from asa.components.explanation import explain
-
 from asa.graph.state import (
     Chunk,
     RankedCause,
@@ -233,9 +232,12 @@ def test_safety_halt_is_explained_from_its_own_lines_and_reason():
     result = explain(state, "halted")
     assert result["decision"]["verdict"] == "halt"
     assert result["decision"]["why"] == "The manual requires power-off before opening panel doors."
-    assert result["claims_verified"] >= 2
+    # The three quoted manual lines verify. The narrative opening sentence is the model's own summary, not a manual
+    # sentence, so it stays unverified (it says "explicitly" and "opening", which the manual does not) and the
+    # confidence is capped just below high.
+    assert result["claims_verified"] == 3 and result["claims_checked"] == 4
     assert all(c["page"] == 26 for c in result["citations"])
-    assert result["confidence"] >= 0.70  # a documented prohibition is strong evidence
+    assert 0.5 <= result["confidence"] < 0.70
 
 
 def test_diagnostic_claims_use_their_own_supporting_passages():
@@ -271,10 +273,7 @@ def test_safety_claims_use_only_their_supporting_chunks():
         section_id="2.2.2",
         revision="0",
         equipment_model="thermal_station",
-        text=(
-            "Electrical Hazards: Hazardous voltages may "
-            "exist and can cause electric shock or burns."
-        ),
+        text=("Electrical Hazards: Hazardous voltages may exist and can cause electric shock or burns."),
         score=1.0,
         source_file="manual.pdf",
         page=19,
@@ -287,10 +286,7 @@ def test_safety_claims_use_only_their_supporting_chunks():
         section_id="2.2.3",
         revision="0",
         equipment_model="thermal_station",
-        text=(
-            "Standard Personal Protective Equipment "
-            "is required for installation."
-        ),
+        text=("Standard Personal Protective Equipment is required for installation."),
         score=1.0,
         source_file="manual.pdf",
         page=22,
@@ -312,11 +308,7 @@ def test_safety_claims_use_only_their_supporting_chunks():
         "safety_claims": [
             SafetyClaim(
                 category="hazard",
-                text=(
-                    "Electrical Hazards: Hazardous voltages "
-                    "may exist and can cause electric shock "
-                    "or burns."
-                ),
+                text=("Electrical Hazards: Hazardous voltages may exist and can cause electric shock or burns."),
                 supporting_chunk_ids=[
                     "s19",
                 ],
@@ -334,17 +326,9 @@ def test_safety_claims_use_only_their_supporting_chunks():
 
     assert result["citations"]
 
-    assert all(
-        citation["chunk_id"] == "s19"
-        for citation
-        in result["citations"]
-    )
+    assert all(citation["chunk_id"] == "s19" for citation in result["citations"])
 
-    assert all(
-        citation["page"] == 19
-        for citation
-        in result["citations"]
-    )
+    assert all(citation["page"] == 19 for citation in result["citations"])
 
 
 # --------------------------------------------------------------------------- #
@@ -410,14 +394,18 @@ SEMI_ANNUAL_SOURCE = "[Source: aem_thermal_station.pdf, page 118, section 11.1.1
 
 def test_a_marker_after_the_full_stop_cites_the_sentence_before_it():
     # How the RAG agent actually writes citations: the marker follows the full stop.
-    explanation = explain(rag_state(final_answer=f"Spring washers must not be reused after removal. {SEMI_ANNUAL_SOURCE}"), "ok")
+    explanation = explain(
+        rag_state(final_answer=f"Spring washers must not be reused after removal. {SEMI_ANNUAL_SOURCE}"), "ok"
+    )
     assert explanation["claims_checked"] == 1
     assert explanation["claims_verified"] == 1
     assert [(c["page"], c["chunk_id"]) for c in explanation["citations"]] == [(118, "c118")]
 
 
 def test_a_marker_before_the_full_stop_still_cites_its_sentence():
-    explanation = explain(rag_state(final_answer=f"Spring washers must not be reused after removal {SEMI_ANNUAL_SOURCE}."), "ok")
+    explanation = explain(
+        rag_state(final_answer=f"Spring washers must not be reused after removal {SEMI_ANNUAL_SOURCE}."), "ok"
+    )
     assert explanation["claims_verified"] == 1
     assert [c["page"] for c in explanation["citations"]] == [118]
 
@@ -445,16 +433,20 @@ def _contradiction_notes(explanation):
 
 def test_a_claim_that_drops_the_negation_is_not_verified():
     # The manual says spring washers must NOT be reused; the claim says the opposite with the same words.
-    explanation = explain(rag_state(final_answer=f"Spring washers must be reused after removal. {SEMI_ANNUAL_SOURCE}"), "ok")
+    explanation = explain(
+        rag_state(final_answer=f"Spring washers must be reused after removal. {SEMI_ANNUAL_SOURCE}"), "ok"
+    )
     assert explanation["claims_verified"] == 0
     assert explanation["citations"] == []
     assert _contradiction_notes(explanation) == [
-        "1 claim(s) appear to contradict the cited manual sentence (negation or numbers differ): verify them."
+        "1 claim(s) appear to contradict the cited manual sentence (negation, numbers or named terms differ): verify them."
     ]
 
 
 def test_a_faithful_negative_claim_is_still_verified():
-    explanation = explain(rag_state(final_answer=f"Spring washers must not be reused after removal. {SEMI_ANNUAL_SOURCE}"), "ok")
+    explanation = explain(
+        rag_state(final_answer=f"Spring washers must not be reused after removal. {SEMI_ANNUAL_SOURCE}"), "ok"
+    )
     assert explanation["claims_verified"] == 1
     assert _contradiction_notes(explanation) == []
 
@@ -468,14 +460,18 @@ INTERVAL = chunk(
 
 
 def test_a_claim_with_a_different_number_is_not_verified():
-    answer = f"Semi annual preventive maintenance is performed every 3 months by qualified personnel. {SEMI_ANNUAL_SOURCE}"
+    answer = (
+        f"Semi annual preventive maintenance is performed every 3 months by qualified personnel. {SEMI_ANNUAL_SOURCE}"
+    )
     explanation = explain(rag_state(final_answer=answer, retrieved_chunks=[INTERVAL]), "ok")
     assert explanation["claims_verified"] == 0
     assert len(_contradiction_notes(explanation)) == 1
 
 
 def test_a_claim_with_the_same_number_is_verified():
-    answer = f"Semi annual preventive maintenance is performed every 6 months by qualified personnel. {SEMI_ANNUAL_SOURCE}"
+    answer = (
+        f"Semi annual preventive maintenance is performed every 6 months by qualified personnel. {SEMI_ANNUAL_SOURCE}"
+    )
     explanation = explain(rag_state(final_answer=answer, retrieved_chunks=[INTERVAL]), "ok")
     assert explanation["claims_verified"] == 1
     assert [c["chunk_id"] for c in explanation["citations"]] == ["c118b"]
@@ -495,7 +491,9 @@ def test_an_unverified_claim_caps_the_confidence_below_the_floor():
 
 
 def test_a_contradicted_claim_makes_the_confidence_low():
-    answer = f"{PEELING_LABELS}. {SEMI_ANNUAL_SOURCE}\nSpring washers must be reused after removal. {SEMI_ANNUAL_SOURCE}"
+    answer = (
+        f"{PEELING_LABELS}. {SEMI_ANNUAL_SOURCE}\nSpring washers must be reused after removal. {SEMI_ANNUAL_SOURCE}"
+    )
     result = explain(rag_state(final_answer=answer), "ok")
     assert result["confidence"] <= 0.45 and result["confidence_level"] == "low"
 
@@ -651,7 +649,9 @@ GUIDELINES_SOURCE = "[Source: aem_thermal_station.pdf, page 19, section 2.2.2 Ge
 
 
 def test_a_two_word_label_is_verified_when_both_words_are_in_the_cited_sentence():
-    result = explain(rag_state(final_answer=f"- Electrical Hazards {GUIDELINES_SOURCE}", retrieved_chunks=[GUIDELINES]), "ok")
+    result = explain(
+        rag_state(final_answer=f"- Electrical Hazards {GUIDELINES_SOURCE}", retrieved_chunks=[GUIDELINES]), "ok"
+    )
     assert result["claims_verified"] == 1
     assert result["citations"][0]["quote"].startswith("Electrical Hazards")
 
@@ -662,5 +662,7 @@ def test_a_one_word_claim_is_never_verified():
 
 
 def test_a_two_word_label_missing_from_its_cited_page_is_not_verified():
-    result = explain(rag_state(final_answer=f"- Radiation Hazards {GUIDELINES_SOURCE}", retrieved_chunks=[GUIDELINES]), "ok")
+    result = explain(
+        rag_state(final_answer=f"- Radiation Hazards {GUIDELINES_SOURCE}", retrieved_chunks=[GUIDELINES]), "ok"
+    )
     assert result["claims_verified"] == 0

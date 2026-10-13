@@ -436,7 +436,7 @@ def test_explanation_dataset_covers_every_rule_of_the_layer(explanation_eval):
         "blocked",
         "unavailable",
     }
-    assert sum(1 for case in cases if case.get("known_gap")) >= 4, "near-miss claims keep the numbers honest"
+    assert sum(1 for case in cases if case["expect"].get("verified") == 0) >= 6, "near-miss claims"
 
 
 def test_explanation_metrics_with_a_stub_layer(explanation_eval):
@@ -501,15 +501,17 @@ def test_the_real_explanation_layer_keeps_every_invariant(explanation_eval):
     assert report["expectation_pass_rate"] == 1.0, report["failures"]
 
 
-def test_the_known_gaps_of_the_verifier_are_still_open(explanation_eval):
-    """Near-miss claims (wording close to the manual, meaning different) are still verified. When the verifier is
-    strengthened and one of these is caught, remove its known_gap flag so the numbers stay accurate."""
-    report = explanation_eval.evaluate(explanation_eval.load_cases())
-    assert report["known_gaps_total"] >= 4
-    assert report["known_gaps_open"] == report["known_gaps_total"], (
-        "a known gap is now closed: " + str([g for g in explanation_eval.load_cases() if g.get("known_gap")])[:0]
-    )
-    assert report["false_verification_rate"] == 1.0
+def test_the_near_miss_claims_are_not_verified(explanation_eval):
+    """Near-miss claims (wording close to the manual, meaning different: a changed number, a swapped part, an opposite
+    verb, the right number for the wrong quantity) must stay unverified. They are ordinary cases of the dataset, so
+    `expectation_pass_rate` covers them; this test pins that they are there and that none is flagged as a known gap."""
+    cases = explanation_eval.load_cases()
+    near_miss = [c for c in cases if c["id"] in {"exp-31", "exp-32", "exp-40", "exp-41", "exp-42", "exp-43"}]
+    assert len(near_miss) == 6
+    assert all(c["expect"]["verified"] == 0 and not c.get("known_gap") for c in near_miss)
+    report = explanation_eval.evaluate(cases)
+    assert report["known_gaps_open"] == 0
+    assert report["expectation_pass_rate"] == 1.0, report["failures"]
 
 
 # --- the corruptions used on real answers ---
@@ -555,10 +557,10 @@ def test_live_evaluation_detects_an_invented_claim_and_a_negation(explanation_ev
     assert report["answer_level_detection"]["negation_inserted"] == {"rate": 1.0, "tested": 1}
 
 
-def test_live_evaluation_reports_the_known_weak_spot_honestly(explanation_eval):
-    """Swapping EGW for air is a near miss that the matcher accepts: the report must say so, not hide it."""
+def test_live_evaluation_catches_an_entity_swap(explanation_eval):
+    """Swapping EGW for air was once accepted by the matcher; the live evaluation must now see it caught."""
     report = explanation_eval.evaluate_live_records([_record(explanation_eval)])
-    assert report["answer_level_detection"]["entity_swapped"] == {"rate": 0.0, "tested": 1}
+    assert report["answer_level_detection"]["entity_swapped"] == {"rate": 1.0, "tested": 1}
 
 
 def test_live_evaluation_skips_answers_with_no_explanation(explanation_eval):
@@ -608,7 +610,7 @@ def test_claim_level_detection_corrupts_only_verified_claims_one_at_a_time(expla
     report = explanation_eval.evaluate_live_records([_record(explanation_eval)])
     claim = report["claim_level_detection"]
     assert claim["negation_inserted"] == {"rate": 1.0, "tested": 1}  # a flipped instruction is caught
-    assert claim["entity_swapped"] == {"rate": 0.0, "tested": 1}  # EGW -> air is still verified: a known weak spot
+    assert claim["entity_swapped"] == {"rate": 1.0, "tested": 1}  # EGW -> air is still verified: a known weak spot
     assert "number_changed" not in claim  # the sentence has no quantity to change
     assert report["rows"][0]["claim_level"]["negation_inserted"] == [True]
 
