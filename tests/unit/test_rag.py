@@ -742,3 +742,125 @@ def test_node_rejects_missing_query_or_equipment_without_running_the_agent(monke
 
     with pytest.raises(ValueError, match=message):
         orchestrator.agentic_rag_node(state)
+
+
+# ----------------------------------------------------------------------
+# S9: the GOOD verdict ignores case, punctuation and markdown, nothing else
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "reply",
+    ["GOOD", "good", "Good.", "GOOD.", "**GOOD**", "`GOOD`", "\"GOOD\"", "Good!", "  GOOD \n", "- GOOD", "GOOD\n"],
+)
+def test_assess_retrieval_accepts_good_with_harmless_formatting(monkeypatch, reply):
+    """S9: 'GOOD.' and '**GOOD**' used to count as POOR and cost an extra retrieval; they are GOOD now."""
+    agent = _make_agent(monkeypatch, assess=[_msg(reply)])
+
+    assert agent.assess_retrieval(QUESTION, EQUIPMENT, [_chunk_dict()]) is True
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "POOR",
+        "**POOR**",
+        "NOT GOOD",
+        "not good.",
+        "GOOD enough",
+        "GOOD, but incomplete",
+        "GOODNESS",
+        "GOOD OR POOR",
+        "G.O.O.D",
+        "BAD",
+        "",
+        "   ",
+        "...",
+        "**",
+        "Evidence is good",
+    ],
+)
+def test_assess_retrieval_still_rejects_anything_that_is_not_just_good(monkeypatch, reply):
+    """S9: loosening the format must not loosen the verdict: any other word keeps the evidence POOR (fail-safe)."""
+    agent = _make_agent(monkeypatch, assess=[_msg(reply)])
+
+    assert agent.assess_retrieval(QUESTION, EQUIPMENT, [_chunk_dict()]) is False
+
+
+def test_the_loop_stops_after_one_search_when_the_assessment_is_good_with_punctuation(monkeypatch):
+    """S9 end to end: a 'GOOD.' assessment ends the loop on the first attempt instead of reformulating."""
+    retriever = FakeRetriever(default=[_chunk()])
+    agent = _make_agent(monkeypatch, retriever, junior=[_search("first")], assess=[_msg("**GOOD**")])
+
+    out = agent.run_retrieval_loop(QUESTION, EQUIPMENT)
+
+    assert out["retrieval_status"] == "GOOD"
+    assert out["retrieval_attempts"] == 1
+    assert len(retriever.calls) == 1
+    assert agent.client.stage_calls("reformulate") == []
+
+
+# ----------------------------------------------------------------------
+# S8: an escalation carries no query
+# ----------------------------------------------------------------------
+
+
+def test_senior_escalate_with_a_query_returns_no_query(monkeypatch):
+    """S8: a query the model adds to an ESCALATE is not an instruction to search and is not passed on."""
+    review = _review("DECISION: ESCALATE\nREASON: not documented\nQUERY: pump fault code table", monkeypatch)
+
+    assert review["decision"] == "ESCALATE"
+    assert review["query"] is None
+    assert review["reason"] == "not documented"
+
+
+@pytest.mark.parametrize("decision", ["MAYBE", "", "retry later", "SEARCH", "proceed"])
+def test_senior_invalid_decision_with_a_query_escalates_with_no_query(monkeypatch, decision):
+    """S8: an invalid decision fails safe to ESCALATE and drops the query that came with it."""
+    review = _review(f"DECISION: {decision}\nREASON: unclear\nQUERY: foo bar", monkeypatch)
+
+    assert review["decision"] == "ESCALATE"
+    assert review["query"] is None
+
+
+def test_senior_reply_with_only_a_query_escalates_with_no_query(monkeypatch):
+    """S8: a reply with a query but no decision at all is an escalation without a query."""
+    review = _review("QUERY: foo bar", monkeypatch)
+
+    assert review["decision"] == "ESCALATE"
+    assert review["query"] is None
+
+
+def test_senior_retry_keeps_its_query(monkeypatch):
+    """S8 must not remove the query a genuine RETRY needs."""
+    review = _review("DECISION: RETRY\nREASON: try fault codes\nQUERY: pump fault code table", monkeypatch)
+
+    assert review["decision"] == "RETRY"
+    assert review["query"] == "pump fault code table"
+
+
+def test_senior_retry_without_a_query_escalates_with_no_query(monkeypatch):
+    """A RETRY with no usable query is downgraded to ESCALATE and has no query."""
+    review = _review("DECISION: RETRY\nREASON: try again\nQUERY: NONE", monkeypatch)
+
+    assert review["decision"] == "ESCALATE"
+    assert review["query"] is None
+
+
+def test_the_loop_does_not_search_again_when_the_senior_escalates_with_a_query(monkeypatch):
+    """S8 end to end: an ESCALATE that carries a query still ends after two searches and never runs that query."""
+    retriever = FakeRetriever(default=[_chunk()])
+    agent = _make_agent(
+        monkeypatch,
+        retriever,
+        junior=[_search("first")],
+        assess=[_poor(), _poor()],
+        reformulate=[_msg("second")],
+        senior=[_msg("DECISION: ESCALATE\nREASON: not documented\nQUERY: sneaky third query")],
+    )
+
+    out = agent.run_retrieval_loop(QUESTION, EQUIPMENT)
+
+    assert [call["query"] for call in retriever.calls] == ["first", "second"]
+    assert out["escalation_required"] is True
+    assert out["retrieval_attempts"] == 2

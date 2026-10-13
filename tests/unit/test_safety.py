@@ -559,3 +559,247 @@ def test_search_query_builder_cleans_the_reply_and_sends_the_request(monkeypatch
     prompt = seen["messages"][1]["content"]
     assert "Can I open the panel?" in prompt and "thermal_station" in prompt
     assert seen["temperature"] == 0
+
+
+# --------------------------------------------------------------------------- #
+# S10: the deterministic rules apply inside the Safety Agent as well          #
+#                                                                             #
+# The API gate (app/services/chat_service.py) halts defeat requests before    #
+# the agents. The agent is also reached without it (the graph scripts), so a  #
+# model must never be the only thing between such a request and an ALLOW.     #
+# --------------------------------------------------------------------------- #
+
+DEFEAT_REQUESTS = [
+    ("Can I bypass the safety interlock?", "interlock"),
+    ("How do I disable the emergency stop so the job runs faster?", "emergency stop"),
+    ("Jumper out the door switch while I service the unit.", "door switch"),
+    ("Is it ok to circumvent the light curtain?", "light curtain"),
+]
+# Names an escalate-only hazard (high voltage / stored energy) and no safety control.
+FIELD_UNSERVICEABLE = [
+    "Replace the capacitor in the 480V power distribution unit.",
+    "Work on the high voltage busbar while it is live.",
+]
+
+
+def _state(question):
+    return {"raw_query": question, "equipment_model": "thermal_station"}
+
+
+@pytest.mark.parametrize("model_verdict", ["allow", "escalate", "halt"])
+@pytest.mark.parametrize("question, control", DEFEAT_REQUESTS)
+def test_a_request_to_defeat_a_safety_control_is_a_halt_whatever_the_model_says(
+    monkeypatch, question, control, model_verdict
+):
+    """S10: bypassing a safety control is a deterministic HALT, even if the model says ALLOW or ESCALATE."""
+    result, calls = _run(
+        monkeypatch, _assessment(model_verdict, [HAZARD]), {HAZARD: ["c_power"]}, state=_state(question)
+    )
+    assert result["safety_verdict"] == "halt"
+    assert result["escalated"] is False
+    assert result["final_answer"].startswith("Safety decision: HALT")
+    assert f"({control})" in result["safety_reason"]
+    assert "not permitted" in result["safety_reason"]
+    assert "verdict" not in _kinds(calls)  # a HALT is final: nothing re-validates it into an ALLOW
+
+
+def test_the_defeat_halt_still_lists_the_validated_evidence(monkeypatch):
+    """The HALT is not bare: the hazards the manual supports are still shown with their sources."""
+    question = "Can I bypass the safety interlock?"
+    result, _ = _run(monkeypatch, _assessment("allow", [HAZARD]), {HAZARD: ["c_power"]}, state=_state(question))
+    assert result["hazards"] == [HAZARD]
+    assert f"- {HAZARD} [Source: manual.pdf, page 19" in result["final_answer"]
+
+
+@pytest.mark.parametrize("question", FIELD_UNSERVICEABLE)
+def test_an_allow_for_a_request_that_is_not_field_serviceable_becomes_an_escalation(monkeypatch, question):
+    """S10: high voltage and stored energy are never ALLOWed by the model alone; they go to a qualified engineer."""
+    result, calls = _run(
+        monkeypatch, _assessment("allow", [HAZARD], [PPE], [CONTROL]), ALL_SUPPORTED, state=_state(question)
+    )
+    assert result["safety_verdict"] == "escalate"
+    assert result["escalated"] is True
+    assert result["sufficiency"] is False
+    assert "not field-serviceable" in result["safety_reason"]
+    assert "qualified engineer must handle it" in result["final_answer"]
+    assert result["escalation_reason"] == result["safety_reason"]
+    assert "Safety decision: ALLOW" not in result["final_answer"]
+    assert "verdict" not in _kinds(calls)  # no point asking a model to confirm an ALLOW that cannot stand
+
+
+def test_the_escalation_names_the_hazards_the_rules_found(monkeypatch):
+    """The reason says which hazards made the request not field-serviceable."""
+    question = "Replace the capacitor in the 480V power distribution unit."
+    result, _ = _run(monkeypatch, _assessment("allow", [HAZARD]), {HAZARD: ["c_power"]}, state=_state(question))
+    assert "high_voltage" in result["safety_reason"]
+    assert "stored_energy" in result["safety_reason"]
+
+
+@pytest.mark.parametrize("question", FIELD_UNSERVICEABLE)
+def test_a_model_halt_for_a_hazardous_request_stays_a_halt(monkeypatch, question):
+    """The rules only add caution: a HALT is never softened to an ESCALATE."""
+    result, _ = _run(monkeypatch, _assessment("halt", [HAZARD]), {HAZARD: ["c_power"]}, state=_state(question))
+    assert result["safety_verdict"] == "halt"
+    assert result["escalated"] is False
+
+
+@pytest.mark.parametrize("question", FIELD_UNSERVICEABLE + [q for q, _ in DEFEAT_REQUESTS])
+@pytest.mark.parametrize("model_verdict", ["allow", "escalate", "halt", "garbage", None])
+def test_the_rules_never_turn_a_halt_or_an_escalation_into_an_allow(monkeypatch, question, model_verdict):
+    """For any model verdict, a hazardous or defeat request never ends as ALLOW."""
+    result, _ = _run(
+        monkeypatch, _assessment(model_verdict, [HAZARD]), {HAZARD: ["c_power"]}, state=_state(question)
+    )
+    assert result["safety_verdict"] in {"halt", "escalate"}
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Touch the circuit board without an ESD wrist strap.",
+        "Skip lockout tagout and service the motor.",
+        "Touch the hot surface of the heater element to check it.",
+    ],
+)
+def test_hazards_that_are_serviceable_do_not_force_an_escalation(monkeypatch, question):
+    """ESD, lockout/tagout and heat get warnings elsewhere; they do not turn a grounded ALLOW into an escalation."""
+    result, _ = _run(monkeypatch, _assessment("allow", [HAZARD]), {HAZARD: ["c_power"]}, state=_state(question))
+    assert result["safety_verdict"] == "allow"
+
+
+def test_an_ordinary_question_is_not_changed_by_the_rules(monkeypatch):
+    """The rules do not touch a request that names no defeat and no unserviceable hazard."""
+    result, _ = _run(monkeypatch, _assessment("allow", [HAZARD]), {HAZARD: ["c_power"]})
+    assert result["safety_verdict"] == "allow"
+    assert "documented safety requirements" in result["safety_reason"]
+
+
+def test_the_rules_use_the_clarified_request_as_well(monkeypatch):
+    """A defeat request that only becomes clear after clarification is still a HALT."""
+    state = {
+        "raw_query": "Yes, that one.",
+        "resolved_query": "Original engineer request:\nHow do I stop the cycle?\n\n"
+        "Engineer clarification:\nI want to bypass the safety interlock.",
+        "equipment_model": "thermal_station",
+    }
+    result, _ = _run(monkeypatch, _assessment("allow", [HAZARD]), {HAZARD: ["c_power"]}, state=state)
+    assert result["safety_verdict"] == "halt"
+
+
+def test_the_agent_applies_the_rules_without_the_chat_service(monkeypatch):
+    """S10 regression: the node alone, with no API gate in front of it, refuses to ALLOW a defeat request."""
+    assert "chat_service" not in safety.__dict__  # the agent does not depend on the gate being there
+    result, _ = _run(
+        monkeypatch,
+        _assessment("allow", [HAZARD], [PPE], [CONTROL]),
+        ALL_SUPPORTED,
+        state=_state("How do I bypass the interlock on the door?"),
+    )
+    assert result["safety_verdict"] == "halt"
+
+
+def test_apply_safety_rules_returns_the_verdict_unchanged_when_no_rule_fires():
+    """The helper is a no-op for an ordinary question, for every verdict."""
+    for verdict in ("allow", "halt", "escalate"):
+        assert safety._apply_safety_rules("What PPE is required?", verdict) == (verdict, None)
+
+
+# --------------------------------------------------------------------------- #
+# S11: evidence shown with an ESCALATE is honest and still grounded           #
+# --------------------------------------------------------------------------- #
+
+
+def _rejected_allow(monkeypatch):
+    """An ALLOW with validated items that the evidence check then rejects: the S11 situation."""
+    return _run(
+        monkeypatch,
+        _assessment("allow", [HAZARD], [PPE], [CONTROL]),
+        ALL_SUPPORTED,
+        verdict_reply={"supported": False},
+    )[0]
+
+
+def test_a_rejected_allow_keeps_the_validated_items_for_the_reviewer(monkeypatch):
+    """S11: the escalation still carries what the manual supports, so the human reviewer sees it."""
+    result = _rejected_allow(monkeypatch)
+    assert result["safety_verdict"] == "escalate"
+    assert result["hazards"] == [HAZARD]
+    assert result["ppe_required"] == [PPE]
+    assert {claim.text for claim in result["safety_claims"]} == {HAZARD, PPE, CONTROL}
+
+
+def test_a_rejected_allow_does_not_read_as_a_clearance(monkeypatch):
+    """S11: the answer says plainly that the listed items do not establish that the action is safe."""
+    answer = _rejected_allow(monkeypatch)["final_answer"]
+    assert answer.startswith("Safety decision: ESCALATE")
+    assert safety.ESCALATE_ITEMS_NOTE in answer
+    assert answer.index(safety.ESCALATE_ITEMS_NOTE) < answer.index("Documented hazards:")
+    assert "Human review is required" in answer
+
+
+def test_the_escalation_note_is_only_added_when_there_are_items_to_qualify(monkeypatch):
+    """No items, no note: an escalation with nothing listed has nothing to qualify."""
+    result, _ = _run(monkeypatch, _assessment("escalate", []), supported={})
+    assert safety.ESCALATE_ITEMS_NOTE not in result["final_answer"]
+
+
+def test_the_escalation_note_is_not_added_to_an_allow_or_a_halt(monkeypatch):
+    """The note belongs to ESCALATE only."""
+    allow, _ = _run(monkeypatch, _assessment("allow", [HAZARD]), {HAZARD: ["c_power"]})
+    halt, _ = _run(monkeypatch, _assessment("halt", [HAZARD]), {HAZARD: ["c_power"]})
+    assert safety.ESCALATE_ITEMS_NOTE not in allow["final_answer"]
+    assert safety.ESCALATE_ITEMS_NOTE not in halt["final_answer"]
+
+
+def test_an_item_the_evidence_does_not_support_never_appears_even_on_an_escalation(monkeypatch):
+    """S11: only validated items are shown. A claim the manual does not support is removed on every path."""
+    assess = _assessment("allow", [HAZARD, "Invented laser hazard"], [PPE, "Invented space suit"], [CONTROL])
+    result, _ = _run(monkeypatch, assess, ALL_SUPPORTED, verdict_reply={"supported": False})
+    assert result["safety_verdict"] == "escalate"
+    assert "Invented" not in result["final_answer"]
+    assert result["hazards"] == [HAZARD]
+    assert result["ppe_required"] == [PPE]
+    assert {claim.text for claim in result["safety_claims"]} == {HAZARD, PPE, CONTROL}
+
+
+@pytest.mark.parametrize(
+    "assess, verdict_reply",
+    [
+        (_assessment("allow", [HAZARD], [PPE], [CONTROL]), None),
+        (_assessment("halt", [HAZARD], [PPE], [CONTROL]), None),
+        (_assessment("escalate", [HAZARD], [PPE], [CONTROL]), None),
+        (_assessment("allow", [HAZARD], [PPE], [CONTROL]), {"supported": False}),
+    ],
+    ids=["allow", "halt", "escalate", "rejected-allow"],
+)
+def test_every_claim_points_at_a_passage_that_was_actually_retrieved(monkeypatch, assess, verdict_reply):
+    """Evidence integrity: on every verdict path each claim cites only retrieved chunk ids, and each is listed."""
+    result, _ = _run(monkeypatch, assess, ALL_SUPPORTED, verdict_reply=verdict_reply)
+    retrieved = {chunk.chunk_id for chunk in result["retrieved_chunks"]}
+    assert result["safety_claims"]
+    for claim in result["safety_claims"]:
+        assert claim.supporting_chunk_ids, claim
+        assert set(claim.supporting_chunk_ids) <= retrieved
+    listed = set(result["hazards"]) | set(result["ppe_required"]) | {c.text for c in result["safety_claims"] if c.category == "control"}
+    assert {claim.text for claim in result["safety_claims"]} == listed
+
+
+def test_a_claim_citing_only_an_invented_chunk_id_is_not_kept_on_an_escalation(monkeypatch):
+    """A claim supported only by a chunk that was never retrieved is dropped, so it cannot appear anywhere."""
+    result, _ = _run(
+        monkeypatch,
+        _assessment("allow", [HAZARD], [PPE], []),
+        {HAZARD: ["c_power"], PPE: ["c_does_not_exist"]},
+        verdict_reply={"supported": False},
+    )
+    assert result["ppe_required"] == []
+    assert all("c_does_not_exist" not in claim.supporting_chunk_ids for claim in result["safety_claims"])
+    assert PPE not in result["final_answer"]
+
+
+def test_an_escalation_without_a_usable_assessment_lists_no_items(monkeypatch):
+    """When no assessment could be made there is nothing validated to show: the helper path stays empty."""
+    result, _ = _run(monkeypatch, RuntimeError("down"))
+    _assert_cautious_escalation(result)
+    assert result["hazards"] == [] and result["ppe_required"] == [] and result["safety_claims"] == []
+    assert safety.ESCALATE_ITEMS_NOTE not in result["final_answer"]

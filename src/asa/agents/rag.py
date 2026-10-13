@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from typing import Any
 
 from dotenv import load_dotenv
@@ -488,7 +489,9 @@ POOR
 
         print(f"LLM retrieval assessment: {assessment}")
 
-        return assessment == "GOOD"
+        # Only the single word GOOD counts. Case, punctuation and markdown around it ("GOOD.", "**GOOD**")
+        # do not change the verdict, but any other word does ("GOOD enough", "NOT GOOD" stay POOR).
+        return re.sub(r"[^A-Z]+", " ", assessment).strip() == "GOOD"
 
     def reformulate_query(
         self,
@@ -703,6 +706,11 @@ Rules:
             decision = "ESCALATE"
 
             reason = "Senior Agent requested RETRY without providing a valid query."
+
+        # An escalation searches nothing, so it carries no query. A query the model supplied alongside an
+        # ESCALATE (or an invalid decision) must not be passed on as if it were an instruction to search.
+        if decision == "ESCALATE":
+            query = None
 
         print(f"Senior decision: {decision}")
 
