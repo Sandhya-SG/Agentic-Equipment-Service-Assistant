@@ -29,7 +29,7 @@ Run date: 2026-10-13 · Branch `feature/evals-full` after merging `origin/main` 
 | 7 | Promptfoo performance (`perf.yaml`) | 7 | 7 | 0 | Target 10 s per request, all met |
 | 8 | DeepEval grounding | 16 | 14 | 2 | 0 skipped; grounding rate 88% vs 90% target |
 | 9 | Offline evaluation (guard and safety rules) | 7 targets | 6 | 1 | One target (false-positive rate) missed by design |
-| 10 | pytest unit, API and security tests | 341 | 339 | 0 | 2 skipped (live OpenAI tests, opt-in) |
+| 10 | pytest unit, API and security tests | 588 | 586 | 0 | 2 skipped (live OpenAI tests, opt-in) |
 
 ### 1.3 Environment and versions
 
@@ -399,7 +399,45 @@ The false-positive target is stricter than today's result on purpose: it records
 
 ## 10. pytest unit, API and security tests
 
-Run with `pytest tests` (fake model, no key, no network). **Result: 341 tests, 339 passed, 0 failed, 2 skipped** (live OpenAI tests, opt-in with `--run-openai`). The description is the test's docstring where it has one, otherwise its name.
+Run with `pytest tests` (fake model, no key, no network). **Result: 588 tests, 586 passed, 0 failed, 2 skipped** (live OpenAI tests, opt-in with `--run-openai`). The description is the test's docstring where it has one, otherwise its name.
+
+### integration/test_graph_flow.py (33 tests)
+
+| ID | Test | Description | Result |
+|---|---|---|---|
+| UT-graph_flow-01 | `test_ready_request_runs_request_planning_then_the_chosen_specialist[agentic_rag]` | READY goes Request -> Planning -> the specialist the planner chose, then the run ends. | PASS |
+| UT-graph_flow-02 | `test_ready_request_runs_request_planning_then_the_chosen_specialist[diagnostic]` | READY goes Request -> Planning -> the specialist the planner chose, then the run ends. | PASS |
+| UT-graph_flow-03 | `test_ready_request_runs_request_planning_then_the_chosen_specialist[safety]` | READY goes Request -> Planning -> the specialist the planner chose, then the run ends. | PASS |
+| UT-graph_flow-04 | `test_exactly_one_specialist_runs[agentic_rag]` | The other two specialists are never called. | PASS |
+| UT-graph_flow-05 | `test_exactly_one_specialist_runs[diagnostic]` | The other two specialists are never called. | PASS |
+| UT-graph_flow-06 | `test_exactly_one_specialist_runs[safety]` | The other two specialists are never called. | PASS |
+| UT-graph_flow-07 | `test_the_run_ends_after_the_specialist` | Nothing runs after the specialist: there is no loop back to planning. | PASS |
+| UT-graph_flow-08 | `test_clarification_stops_the_run_before_planning` | CLARIFY ends the graph so the application can ask the engineer; no specialist runs. | PASS |
+| UT-graph_flow-09 | `test_an_unexpected_request_status_also_stops_the_run` | A status the router does not know is treated as a clarification, never as READY. | PASS |
+| UT-graph_flow-10 | `test_a_missing_request_status_stops_the_run` | If the Request Agent returns nothing useful, the run stops instead of guessing. | PASS |
+| UT-graph_flow-11 | `test_an_unknown_planning_step_goes_to_safety[]` | An unrecognised step reaches the cautious specialist, not an arbitrary one. | PASS |
+| UT-graph_flow-12 | `test_an_unknown_planning_step_goes_to_safety[rag]` | An unrecognised step reaches the cautious specialist, not an arbitrary one. | PASS |
+| UT-graph_flow-13 | `test_an_unknown_planning_step_goes_to_safety[nonsense]` | An unrecognised step reaches the cautious specialist, not an arbitrary one. | PASS |
+| UT-graph_flow-14 | `test_an_unknown_planning_step_goes_to_safety[None]` | An unrecognised step reaches the cautious specialist, not an arbitrary one. | PASS |
+| UT-graph_flow-15 | `test_a_planner_that_returns_no_step_goes_to_safety` | Missing planning output is handled like an unknown step. | PASS |
+| UT-graph_flow-16 | `test_the_planner_sees_what_the_request_agent_decided` | The request decision is part of the state the next node receives. | PASS |
+| UT-graph_flow-17 | `test_the_specialist_sees_the_plan_and_the_original_question` | The specialist receives the planner's choice and reason, and the question and equipment. | PASS |
+| UT-graph_flow-18 | `test_the_final_state_holds_every_nodes_updates` | Updates from all three nodes are merged into the final state. | PASS |
+| UT-graph_flow-19 | `test_the_trace_is_appended_in_the_order_the_agents_ran` | The trace uses an append-only reducer, so earlier events are kept and the order is the run order. | PASS |
+| UT-graph_flow-20 | `test_a_clarification_run_has_only_the_request_event_in_its_trace` | A short-circuited run leaves a one-step trace. | PASS |
+| UT-graph_flow-21 | `test_the_state_given_to_the_graph_is_not_modified` | Running the graph does not mutate the caller's initial state. | PASS |
+| UT-graph_flow-22 | `test_a_failing_request_agent_raises_and_nothing_else_runs` | A node error propagates to the caller (the chat service reports 'unavailable'); later nodes do not run. | PASS |
+| UT-graph_flow-23 | `test_a_failing_planner_raises_and_no_specialist_runs` | If planning fails, no specialist is called as a fallback. | PASS |
+| UT-graph_flow-24 | `test_a_failing_specialist_raises_instead_of_returning_a_partial_answer[agentic_rag]` | A specialist error is never turned into an answer inside the graph. | PASS |
+| UT-graph_flow-25 | `test_a_failing_specialist_raises_instead_of_returning_a_partial_answer[diagnostic]` | A specialist error is never turned into an answer inside the graph. | PASS |
+| UT-graph_flow-26 | `test_a_failing_specialist_raises_instead_of_returning_a_partial_answer[safety]` | A specialist error is never turned into an answer inside the graph. | PASS |
+| UT-graph_flow-27 | `test_the_graph_has_exactly_the_expected_nodes` | Request, Planning and the three specialists, plus the start and end markers. | PASS |
+| UT-graph_flow-28 | `test_the_graph_edges_match_the_workflow` | start -> request; request -> planning or end; planning -> each specialist; each specialist -> end. | PASS |
+| UT-graph_flow-29 | `test_the_graph_runner_returns_the_final_state_with_a_trace_of_the_run` | run_graph streams the real graph and reports the agents in order with their categorical details. | PASS |
+| UT-graph_flow-30 | `test_the_graph_runner_passes_the_clarification_context_to_the_request_agent` | A follow-up carries the clarification response, the combined query and the attempt count into the graph. | PASS |
+| UT-graph_flow-31 | `test_the_graph_runner_starts_a_new_run_with_clean_state` | A first request carries no clarification context and no previous answer. | PASS |
+| UT-graph_flow-32 | `test_the_graph_runner_propagates_a_node_failure` | An agent error reaches the chat service unchanged, so it can answer 'unavailable'. | PASS |
+| UT-graph_flow-33 | `test_a_clarification_through_the_runner_has_a_single_step_trace` | The runner reports a short-circuited run as one completed step. | PASS |
 
 ### live/test_openai_live.py (2 tests)
 
@@ -589,6 +627,42 @@ Run with `pytest tests` (fake model, no key, no network). **Result: 341 tests, 3
 | UT-chunk-16 | `test_a_page_without_a_heading_continues_the_previous_section` | a page without a heading continues the previous section | PASS |
 | UT-chunk-17 | `test_the_table_of_contents_is_not_carried_forward` | the table of contents is not carried forward | PASS |
 
+### unit/test_diagnostic.py (31 tests)
+
+| ID | Test | Description | Result |
+|---|---|---|---|
+| UT-diagnostic-01 | `test_good_evidence_returns_full_state_update` | The node must return exactly the documented state keys for a successful diagnosis. | PASS |
+| UT-diagnostic-02 | `test_retrieved_chunks_map_rrf_score_and_provenance` | RAG result dicts must be converted to Chunk objects with score and citation metadata. | PASS |
+| UT-diagnostic-03 | `test_retrieval_is_requested_for_the_selected_equipment` | Retrieval must be scoped to the engineer's equipment model and query. | PASS |
+| UT-diagnostic-04 | `test_resolved_query_takes_priority_over_raw_query` | A clarified (resolved) query must be used for retrieval instead of the raw one. | PASS |
+| UT-diagnostic-05 | `test_causes_carry_likelihood_and_supporting_chunk_ids` | Each retained cause must keep its likelihood and the chunk ids that support it. | PASS |
+| UT-diagnostic-06 | `test_steps_are_numbered_in_model_order_and_keep_hazard_flag` | Troubleshooting steps must be ordered 1..n in model order with hazard_flag preserved. | PASS |
+| UT-diagnostic-07 | `test_step_order_keeps_original_numbers_after_a_step_is_dropped` | Dropping an unsupported step must not renumber the remaining ones (gaps stay visible). | PASS |
+| UT-diagnostic-08 | `test_likelihood_is_clamped_to_unit_interval` | Out-of-range likelihoods from the model must be clamped into [0, 1]. | PASS |
+| UT-diagnostic-09 | `test_missing_optional_fields_use_safe_defaults` | A cause with no likelihood and a step with no hazard_flag must get 0.0 / False. | PASS |
+| UT-diagnostic-10 | `test_cause_citing_unknown_chunk_id_is_removed_without_a_model_call` | A cause whose cited chunk ids were not retrieved must be dropped (no invented evidence). | PASS |
+| UT-diagnostic-11 | `test_claims_with_no_citations_are_removed` | A cause or step with an empty supporting_chunk_ids list must be dropped. | PASS |
+| UT-diagnostic-12 | `test_step_citing_unknown_chunk_id_is_removed` | A recommended check citing a chunk id that does not exist must be dropped. | PASS |
+| UT-diagnostic-13 | `test_validator_receives_only_the_cited_chunk_text` | Validation must judge a claim against its cited chunks only, not all retrieved text. | PASS |
+| UT-diagnostic-14 | `test_unsupported_cause_is_removed_and_supported_one_kept` | Causes the validator marks UNSUPPORTED must be removed from the result. | PASS |
+| UT-diagnostic-15 | `test_validator_verdict_is_case_and_whitespace_tolerant` | A verdict like ' supported \n' must still count as SUPPORTED. | PASS |
+| UT-diagnostic-16 | `test_any_verdict_other_than_exactly_supported_removes_the_claim[UNSUPPORTED]` | Fail closed: ambiguous or malformed validator verdicts must drop the claim. | PASS |
+| UT-diagnostic-17 | `test_any_verdict_other_than_exactly_supported_removes_the_claim[Not SUPPORTED]` | Fail closed: ambiguous or malformed validator verdicts must drop the claim. | PASS |
+| UT-diagnostic-18 | `test_any_verdict_other_than_exactly_supported_removes_the_claim[maybe]` | Fail closed: ambiguous or malformed validator verdicts must drop the claim. | PASS |
+| UT-diagnostic-19 | `test_any_verdict_other_than_exactly_supported_removes_the_claim[SUPPORTED.]` | Fail closed: ambiguous or malformed validator verdicts must drop the claim. | PASS |
+| UT-diagnostic-20 | `test_answer_lists_only_validated_causes_and_steps` | The engineer-facing answer must not mention a cause or check that validation removed. | PASS |
+| UT-diagnostic-21 | `test_all_claims_removed_gives_not_confirmed_answer_without_escalation` | With evidence but no supported cause, the node says so and lists no cause. | PASS |
+| UT-diagnostic-22 | `test_model_assessment_text_is_never_shown_to_the_engineer` | The free-text assessment from the model must be replaced by the fixed conservative text. | PASS |
+| UT-diagnostic-23 | `test_empty_model_lists_yield_empty_results` | An empty or missing candidate_causes / recommended_checks must produce empty lists. | PASS |
+| UT-diagnostic-24 | `test_insufficient_evidence_escalates_with_rag_reason_and_skips_the_model` | Non-GOOD retrieval must escalate with the RAG reason and never call the model. | PASS |
+| UT-diagnostic-25 | `test_escalation_uses_default_reason_when_rag_gives_none` | A missing or empty senior_reason must fall back to the default insufficiency reason. | PASS |
+| UT-diagnostic-26 | `test_missing_query_raises_before_any_retrieval` | An empty query must be rejected without touching retrieval or the model. | PASS |
+| UT-diagnostic-27 | `test_missing_equipment_model_raises_before_any_retrieval` | A missing equipment model must be rejected so retrieval is never unscoped. | PASS |
+| UT-diagnostic-28 | `test_malformed_json_never_yields_an_ungrounded_diagnosis` | Malformed model JSON must not produce causes or steps (currently it raises). | PASS |
+| UT-diagnostic-29 | `test_step_has_no_executable_or_actuator_field` | Steps are advice only: the type has no command field and extra model keys are ignored. | PASS |
+| UT-diagnostic-30 | `test_hazard_flag_is_passed_through_not_inferred_by_the_node` | Hazard classification belongs to the Safety agent: the node only relays the model flag. | PASS |
+| UT-diagnostic-31 | `test_format_context_includes_ids_and_provenance_for_every_chunk` | The model prompt must expose chunk ids and provenance so it can cite them. | PASS |
+
 ### unit/test_eval_offline.py (13 tests)
 
 | ID | Test | Description | Result |
@@ -709,6 +783,209 @@ Run with `pytest tests` (fake model, no key, no network). **Result: 341 tests, 3
 | UT-logging-27 | `test_alerts_fire_for_error_spikes_and_blocked_anomalies` | alerts fire for error spikes and blocked anomalies | PASS |
 | UT-logging-28 | `test_alert_thresholds_can_be_overridden_by_environment_and_by_argument` | alert thresholds can be overridden by environment and by argument | PASS |
 
+### unit/test_rag.py (43 tests)
+
+| ID | Test | Description | Result |
+|---|---|---|---|
+| UT-rag-01 | `test_tool_definition_requires_query_and_equipment_and_forbids_extras` | The search tool schema makes query and equipment_model mandatory and rejects extra fields. | PASS |
+| UT-rag-02 | `test_execute_tool_returns_chunk_dicts_and_passes_arguments_to_retriever` | execute_tool turns Chunks into the dict shape the loop expects and forwards query/equipment/k. | PASS |
+| UT-rag-03 | `test_execute_tool_rejects_missing_arguments_and_unknown_tools[search_service_documents-arguments0-requires query]` | Missing query/equipment and unknown tool names raise instead of searching. | PASS |
+| UT-rag-04 | `test_execute_tool_rejects_missing_arguments_and_unknown_tools[search_service_documents-arguments1-requires equipment_model]` | Missing query/equipment and unknown tool names raise instead of searching. | PASS |
+| UT-rag-05 | `test_execute_tool_rejects_missing_arguments_and_unknown_tools[delete_everything-arguments2-Unknown tool]` | Missing query/equipment and unknown tool names raise instead of searching. | PASS |
+| UT-rag-06 | `test_junior_search_forces_tool_choice_and_uses_model_query` | The junior model must call the search tool (tool_choice forced) and its query is what is searched. | PASS |
+| UT-rag-07 | `test_junior_search_overrides_equipment_and_k_chosen_by_model` | The model cannot switch equipment or inflate k: the application's values always win. | PASS |
+| UT-rag-08 | `test_junior_search_requires_equipment_model` | An empty equipment model is refused before any model call is made. | PASS |
+| UT-rag-09 | `test_junior_search_raises_when_model_does_not_call_the_tool` | A model reply without a tool call fails loudly rather than answering from nothing. | PASS |
+| UT-rag-10 | `test_junior_search_malformed_tool_arguments_raise_and_never_search` | Non-JSON tool arguments raise a JSON error and no retrieval happens. | PASS |
+| UT-rag-11 | `test_junior_search_rejects_tool_call_without_query` | A tool call whose arguments omit the query is rejected instead of searching an empty string. | PASS |
+| UT-rag-12 | `test_assess_retrieval_only_accepts_the_single_word_good[GOOD-True]` | Assessment is True only for exactly GOOD (case/whitespace-insensitive); anything else is POOR. | PASS |
+| UT-rag-13 | `test_assess_retrieval_only_accepts_the_single_word_good[ good\n-True]` | Assessment is True only for exactly GOOD (case/whitespace-insensitive); anything else is POOR. | PASS |
+| UT-rag-14 | `test_assess_retrieval_only_accepts_the_single_word_good[POOR-False]` | Assessment is True only for exactly GOOD (case/whitespace-insensitive); anything else is POOR. | PASS |
+| UT-rag-15 | `test_assess_retrieval_only_accepts_the_single_word_good[GOOD enough, I suppose-False]` | Assessment is True only for exactly GOOD (case/whitespace-insensitive); anything else is POOR. | PASS |
+| UT-rag-16 | `test_assess_retrieval_only_accepts_the_single_word_good[-False]` | Assessment is True only for exactly GOOD (case/whitespace-insensitive); anything else is POOR. | PASS |
+| UT-rag-17 | `test_assess_retrieval_with_no_results_is_poor_without_calling_the_model` | Empty retrieval is POOR immediately and costs no model call. | PASS |
+| UT-rag-18 | `test_assess_retrieval_prompt_carries_question_equipment_and_evidence` | The assessor sees the engineer question, the selected equipment and the evidence text. | PASS |
+| UT-rag-19 | `test_reformulate_query_returns_stripped_query_and_keeps_equipment_in_prompt` | Reformulation returns the trimmed new query and the prompt pins the selected equipment. | PASS |
+| UT-rag-20 | `test_senior_review_parses_retry_with_new_query` | A well-formed RETRY reply yields decision, reason and the new query. | PASS |
+| UT-rag-21 | `test_senior_review_parses_escalate_and_ignores_none_query` | ESCALATE with QUERY: NONE gives no query. | PASS |
+| UT-rag-22 | `test_senior_review_retry_without_usable_query_is_downgraded_to_escalate` | RETRY with QUERY: NONE is unsafe, so it becomes ESCALATE with an explanatory reason. | PASS |
+| UT-rag-23 | `test_senior_review_malformed_output_defaults_to_escalate[]` | Unparseable or invalid senior output fails safe to ESCALATE. | PASS |
+| UT-rag-24 | `test_senior_review_malformed_output_defaults_to_escalate[I would retry this one.]` | Unparseable or invalid senior output fails safe to ESCALATE. | PASS |
+| UT-rag-25 | `test_senior_review_malformed_output_defaults_to_escalate[DECISION: MAYBE\nQUERY: foo]` | Unparseable or invalid senior output fails safe to ESCALATE. | PASS |
+| UT-rag-26 | `test_senior_review_decision_is_case_insensitive` | A lower-case decision word is still understood. | PASS |
+| UT-rag-27 | `test_loop_good_first_attempt_stops_after_one_retrieval` | GOOD evidence on the first search ends the loop: 1 attempt, no reformulation, no senior. | PASS |
+| UT-rag-28 | `test_loop_reformulates_after_poor_and_succeeds_on_second_attempt` | POOR then reformulated query then GOOD gives 2 attempts with the new query, senior unused. | PASS |
+| UT-rag-29 | `test_loop_senior_retry_gives_third_good_retrieval` | Two POOR attempts then senior RETRY then GOOD gives 3 attempts, senior_decision RETRY. | PASS |
+| UT-rag-30 | `test_loop_never_exceeds_three_retrievals_and_escalates_when_third_is_poor` | Even if every assessment is POOR, there are exactly three searches (2 junior + 1 senior) then escalation. | PASS |
+| UT-rag-31 | `test_loop_senior_escalate_stops_after_two_retrievals` | Senior ESCALATE means no third search: 2 attempts, INSUFFICIENT, escalation required with the reason. | PASS |
+| UT-rag-32 | `test_loop_pins_equipment_on_every_retrieval_including_reformulated_and_senior` | All three searches carry the application's equipment model and k. | PASS |
+| UT-rag-33 | `test_loop_with_empty_retrieval_goes_through_retries_without_assessor_calls` | Empty results are POOR without model assessment; the loop still reaches senior review and escalates. | PASS |
+| UT-rag-34 | `test_generate_grounded_answer_returns_cited_text_and_demands_inline_citations` | The answer keeps the model's inline [Source: ...] markers and the prompt requires that format. | PASS |
+| UT-rag-35 | `test_run_good_evidence_returns_loop_result_plus_grounded_answer` | With GOOD evidence run() adds the generated cited answer to the retrieval result. | PASS |
+| UT-rag-36 | `test_run_insufficient_evidence_escalates_without_generating_an_answer` | When evidence stays insufficient run() returns the escalation message and never calls the answer model. | PASS |
+| UT-rag-37 | `test_format_retrieval_context_numbers_evidence_with_citation_fields` | The evidence block numbers each chunk and exposes source, page, section and equipment for citing. | PASS |
+| UT-rag-38 | `test_get_client_is_lazy_and_cached` | The OpenAI client is only built on first use (so import/construct needs no key) and then reused. | PASS |
+| UT-rag-39 | `test_node_translates_good_result_into_state` | A GOOD run becomes sufficient, no retries, no escalation, chunks rebuilt and the answer passed through. | PASS |
+| UT-rag-40 | `test_node_translates_escalated_result_into_state` | An INSUFFICIENT run maps to sufficiency False, retry_count attempts-1, escalated and the senior reason. | PASS |
+| UT-rag-41 | `test_node_handles_empty_results` | An escalated run with no chunks yields an empty chunk list rather than failing. | PASS |
+| UT-rag-42 | `test_node_rejects_missing_query_or_equipment_without_running_the_agent[state0-requires a query]` | The node refuses blank query/equipment before invoking the RAG agent. | PASS |
+| UT-rag-43 | `test_node_rejects_missing_query_or_equipment_without_running_the_agent[state1-requires equipment_model]` | The node refuses blank query/equipment before invoking the RAG agent. | PASS |
+
+### unit/test_request.py (37 tests)
+
+| ID | Test | Description | Result |
+|---|---|---|---|
+| UT-request-01 | `test_missing_equipment_asks_to_select_it_without_calling_the_model` | The equipment gate is deterministic: a model decision must never replace selecting the equipment. | PASS |
+| UT-request-02 | `test_blank_equipment_is_treated_as_missing` | Whitespace is not an equipment selection. | PASS |
+| UT-request-03 | `test_empty_request_asks_for_a_description_without_calling_the_model[]` | An empty or whitespace-only question cannot be assessed, so the model is not asked. | PASS |
+| UT-request-04 | `test_empty_request_asks_for_a_description_without_calling_the_model[ ]` | An empty or whitespace-only question cannot be assessed, so the model is not asked. | PASS |
+| UT-request-05 | `test_empty_request_asks_for_a_description_without_calling_the_model[\n\t]` | An empty or whitespace-only question cannot be assessed, so the model is not asked. | PASS |
+| UT-request-06 | `test_missing_query_keys_are_handled_like_an_empty_request` | A state with neither raw_query nor resolved_query must not crash. | PASS |
+| UT-request-07 | `test_equipment_gate_runs_before_the_empty_request_gate` | With nothing selected and nothing typed, the engineer is asked for the equipment first. | PASS |
+| UT-request-08 | `test_ready_decision_proceeds_with_no_question` | READY clears the clarification fields so the graph routes to planning. | PASS |
+| UT-request-09 | `test_ready_decision_drops_a_stray_question` | A model that says READY but still adds a question must not leave a question behind. | PASS |
+| UT-request-10 | `test_clarify_decision_carries_the_models_question` | CLARIFY returns the one question the model asked. | PASS |
+| UT-request-11 | `test_clarify_without_a_question_falls_back_to_the_default_question` | CLARIFY must always give the engineer something to answer. | PASS |
+| UT-request-12 | `test_clarify_with_question_none_keeps_the_default_question` | 'QUESTION: NONE' is not a question to show the engineer. | PASS |
+| UT-request-13 | `test_status_value_is_case_insensitive` | 'ready' and 'Ready' are accepted as READY. | PASS |
+| UT-request-14 | `test_surrounding_whitespace_and_extra_lines_are_tolerated` | Padding and commentary around the two expected lines do not change the decision. | PASS |
+| UT-request-15 | `test_unparseable_decision_becomes_a_clarification_never_a_ready[]` | If the decision cannot be read, the safe default is to ask, not to proceed. | PASS |
+| UT-request-16 | `test_unparseable_decision_becomes_a_clarification_never_a_ready[I think this is fine.]` | If the decision cannot be read, the safe default is to ask, not to proceed. | PASS |
+| UT-request-17 | `test_unparseable_decision_becomes_a_clarification_never_a_ready[READY]` | If the decision cannot be read, the safe default is to ask, not to proceed. | PASS |
+| UT-request-18 | `test_unparseable_decision_becomes_a_clarification_never_a_ready[status ready]` | If the decision cannot be read, the safe default is to ask, not to proceed. | PASS |
+| UT-request-19 | `test_unparseable_decision_becomes_a_clarification_never_a_ready[STATUS READY]` | If the decision cannot be read, the safe default is to ask, not to proceed. | PASS |
+| UT-request-20 | `test_unparseable_decision_becomes_a_clarification_never_a_ready[{"status": "READY"}]` | If the decision cannot be read, the safe default is to ask, not to proceed. | PASS |
+| UT-request-21 | `test_unparseable_decision_becomes_a_clarification_never_a_ready[STATUS: MAYBE\nQUESTION: NONE]` | If the decision cannot be read, the safe default is to ask, not to proceed. | PASS |
+| UT-request-22 | `test_unparseable_decision_becomes_a_clarification_never_a_ready[STATUS: \nQUESTION: NONE]` | If the decision cannot be read, the safe default is to ask, not to proceed. | PASS |
+| UT-request-23 | `test_a_failing_model_call_propagates_so_the_chat_service_can_report_unavailable` | The agent does not swallow model errors; the chat layer turns them into 'unavailable'. | PASS |
+| UT-request-24 | `test_unexpected_reply_object_without_choices_raises` | A response with no choices is an error, not a silent READY. | PASS |
+| UT-request-25 | `test_model_is_called_once_with_temperature_zero_and_the_request_model` | Decisions must be repeatable: temperature 0, the configured model, a single call. | PASS |
+| UT-request-26 | `test_prompt_contains_the_question_and_the_selected_equipment` | The assessment must be about this question and this equipment. | PASS |
+| UT-request-27 | `test_system_message_forbids_answering_or_diagnosing` | The Request Agent only assesses completeness. | PASS |
+| UT-request-28 | `test_prompt_keeps_the_safety_priority_and_the_default_to_ready_rules` | Guards the prompt rules that stop over-asking and let safety questions through to the Safety Agent. | PASS |
+| UT-request-29 | `test_a_plain_request_is_not_marked_as_a_clarification_continuation` | The continuation flag is NO unless a resolved query exists. | PASS |
+| UT-request-30 | `test_resolved_query_replaces_the_raw_query_and_marks_a_continuation` | After a clarification the combined request is assessed, and the model is told it is a follow-up. | PASS |
+| UT-request-31 | `test_follow_up_can_complete_a_clarified_request` | The original vague request plus the answer can become READY. | PASS |
+| UT-request-32 | `test_follow_up_with_a_blank_resolved_query_uses_the_raw_query` | An empty resolved_query is ignored. | PASS |
+| UT-request-33 | `test_resolve_clarification_combines_both_texts_without_adding_information` | The combined request contains the original and the clarification, and nothing else of substance. | PASS |
+| UT-request-34 | `test_resolve_clarification_with_no_original_returns_the_clarification` | Nothing to combine with. | PASS |
+| UT-request-35 | `test_resolve_clarification_with_no_answer_returns_the_original` | A blank answer leaves the original request unchanged. | PASS |
+| UT-request-36 | `test_resolve_clarification_handles_none_inputs` | None is treated as empty text. | PASS |
+| UT-request-37 | `test_the_clarification_limit_is_two_attempts` | After this many follow-ups the chat layer stops asking and escalates (see test_chat for the flow). | PASS |
+
+### unit/test_routing.py (44 tests)
+
+| ID | Test | Description | Result |
+|---|---|---|---|
+| UT-routing-01 | `test_each_plan_selects_its_specialist[PLAN: AGENTIC_RAG\nREASON: documented procedure-agentic_rag]` | RAG, Diagnostic and Safety replies each select the matching graph node. | PASS |
+| UT-routing-02 | `test_each_plan_selects_its_specialist[PLAN: DIAGNOSTIC\nREASON: observed symptom-diagnostic]` | RAG, Diagnostic and Safety replies each select the matching graph node. | PASS |
+| UT-routing-03 | `test_each_plan_selects_its_specialist[PLAN: SAFETY\nREASON: unsafe action requested-safety]` | RAG, Diagnostic and Safety replies each select the matching graph node. | PASS |
+| UT-routing-04 | `test_the_reason_is_returned` | The routing reason is kept so it can be shown and audited. | PASS |
+| UT-routing-05 | `test_plan_value_is_case_insensitive` | 'plan: diagnostic' style output is accepted. | PASS |
+| UT-routing-06 | `test_padding_and_extra_lines_are_tolerated` | Commentary around the two expected lines does not change the routing. | PASS |
+| UT-routing-07 | `test_each_planning_pass_counts_an_iteration` | iteration_count increases by one on top of what the state already holds. | PASS |
+| UT-routing-08 | `test_the_resolved_query_is_routed_after_a_clarification` | After clarification the combined request is what gets routed, not the last short reply. | PASS |
+| UT-routing-09 | `test_unparseable_or_unknown_plan_routes_to_safety[]` | When the choice cannot be read, the cautious specialist takes the request. | PASS |
+| UT-routing-10 | `test_unparseable_or_unknown_plan_routes_to_safety[I would use the diagnostic agent.]` | When the choice cannot be read, the cautious specialist takes the request. | PASS |
+| UT-routing-11 | `test_unparseable_or_unknown_plan_routes_to_safety[AGENTIC_RAG]` | When the choice cannot be read, the cautious specialist takes the request. | PASS |
+| UT-routing-12 | `test_unparseable_or_unknown_plan_routes_to_safety[PLAN AGENTIC_RAG]` | When the choice cannot be read, the cautious specialist takes the request. | PASS |
+| UT-routing-13 | `test_unparseable_or_unknown_plan_routes_to_safety[{"plan": "DIAGNOSTIC"}]` | When the choice cannot be read, the cautious specialist takes the request. | PASS |
+| UT-routing-14 | `test_unparseable_or_unknown_plan_routes_to_safety[PLAN: SOMETHING_ELSE\nREASON: unknown]` | When the choice cannot be read, the cautious specialist takes the request. | PASS |
+| UT-routing-15 | `test_unparseable_or_unknown_plan_routes_to_safety[PLAN: \nREASON: empty]` | When the choice cannot be read, the cautious specialist takes the request. | PASS |
+| UT-routing-16 | `test_unparseable_or_unknown_plan_routes_to_safety[PLAN: RAG\nREASON: wrong name]` | When the choice cannot be read, the cautious specialist takes the request. | PASS |
+| UT-routing-17 | `test_unparseable_plan_explains_the_fallback` | The audit trail says why Safety was chosen. | PASS |
+| UT-routing-18 | `test_a_reason_without_a_plan_still_routes_to_safety` | A reason line alone does not select a specialist, but it is kept. | PASS |
+| UT-routing-19 | `test_planner_refuses_a_request_that_is_not_ready[None]` | Only a READY request may be planned; anything else is a wiring error, not a request to route. | PASS |
+| UT-routing-20 | `test_planner_refuses_a_request_that_is_not_ready[CLARIFY]` | Only a READY request may be planned; anything else is a wiring error, not a request to route. | PASS |
+| UT-routing-21 | `test_planner_refuses_a_request_that_is_not_ready[]` | Only a READY request may be planned; anything else is a wiring error, not a request to route. | PASS |
+| UT-routing-22 | `test_planner_refuses_a_request_that_is_not_ready[ready]` | Only a READY request may be planned; anything else is a wiring error, not a request to route. | PASS |
+| UT-routing-23 | `test_planner_requires_a_query` | No question, nothing to route. | PASS |
+| UT-routing-24 | `test_planner_requires_an_equipment_model` | The equipment is part of the routing context and must be selected. | PASS |
+| UT-routing-25 | `test_a_failing_model_call_propagates` | The planner does not hide model failures; the chat layer reports 'unavailable'. | PASS |
+| UT-routing-26 | `test_planner_calls_the_model_once_at_temperature_zero` | Routing must be repeatable: one call, temperature 0, the configured model. | PASS |
+| UT-routing-27 | `test_prompt_contains_the_question_and_equipment` | The routing is about this question on this equipment. | PASS |
+| UT-routing-28 | `test_prompt_keeps_the_routing_priority_safety_first` | Guards the rules that let safety-critical requests win over diagnostics and lookups. | PASS |
+| UT-routing-29 | `test_system_message_prioritises_safety` | The system message repeats that safety-critical requests have priority. | PASS |
+| UT-routing-30 | `test_ready_request_goes_to_planning` | READY continues to the Planning Agent. | PASS |
+| UT-routing-31 | `test_clarify_request_ends_the_run_for_the_application_to_ask` | CLARIFY stops the graph so the engineer can be asked. | PASS |
+| UT-routing-32 | `test_unexpected_request_status_fails_conservatively_to_clarify[state0]` | An unknown status never proceeds to planning. | PASS |
+| UT-routing-33 | `test_unexpected_request_status_fails_conservatively_to_clarify[state1]` | An unknown status never proceeds to planning. | PASS |
+| UT-routing-34 | `test_unexpected_request_status_fails_conservatively_to_clarify[state2]` | An unknown status never proceeds to planning. | PASS |
+| UT-routing-35 | `test_unexpected_request_status_fails_conservatively_to_clarify[state3]` | An unknown status never proceeds to planning. | PASS |
+| UT-routing-36 | `test_each_specialist_is_routed_to_itself[agentic_rag]` | The three valid steps route to the node of the same name. | PASS |
+| UT-routing-37 | `test_each_specialist_is_routed_to_itself[diagnostic]` | The three valid steps route to the node of the same name. | PASS |
+| UT-routing-38 | `test_each_specialist_is_routed_to_itself[safety]` | The three valid steps route to the node of the same name. | PASS |
+| UT-routing-39 | `test_unknown_step_falls_back_to_safety_not_an_arbitrary_specialist[state0]` | Planning output the graph does not recognise goes to the cautious specialist. | PASS |
+| UT-routing-40 | `test_unknown_step_falls_back_to_safety_not_an_arbitrary_specialist[state1]` | Planning output the graph does not recognise goes to the cautious specialist. | PASS |
+| UT-routing-41 | `test_unknown_step_falls_back_to_safety_not_an_arbitrary_specialist[state2]` | Planning output the graph does not recognise goes to the cautious specialist. | PASS |
+| UT-routing-42 | `test_unknown_step_falls_back_to_safety_not_an_arbitrary_specialist[state3]` | Planning output the graph does not recognise goes to the cautious specialist. | PASS |
+| UT-routing-43 | `test_unknown_step_falls_back_to_safety_not_an_arbitrary_specialist[state4]` | Planning output the graph does not recognise goes to the cautious specialist. | PASS |
+| UT-routing-44 | `test_planner_output_always_routes_to_a_known_node` | Whatever the planner replies, the next node is one of the three specialists. | PASS |
+
+### unit/test_safety.py (59 tests)
+
+| ID | Test | Description | Result |
+|---|---|---|---|
+| UT-safety-01 | `test_grounded_allow_reports_hazards_ppe_and_controls_in_state` | A grounded ALLOW returns its validated items and does not escalate. | PASS |
+| UT-safety-02 | `test_halt_is_kept_without_escalation_and_without_a_verdict_check` | A grounded HALT is final: not escalated, not re-validated, evidence still listed. | PASS |
+| UT-safety-03 | `test_halt_without_any_validated_item_stays_halt` | Validation only adds caution: a HALT with nothing validated must not be downgraded to ALLOW. | PASS |
+| UT-safety-04 | `test_model_escalate_returns_the_escalation_text_and_reason` | A model ESCALATE becomes an escalation with the fixed human-review wording. | PASS |
+| UT-safety-05 | `test_verdict_is_normalised_for_case_and_whitespace` | ' HALT ' and 'Allow' are read as the verdicts they spell. | PASS |
+| UT-safety-06 | `test_allow_rejected_by_the_verdict_check_becomes_escalate` | The model says ALLOW with valid items, the evidence check says unsupported: ESCALATE. | PASS |
+| UT-safety-07 | `test_allow_with_an_unclear_verdict_check_becomes_escalate[reply0]` | Only an explicit boolean true keeps an ALLOW; anything else escalates. | PASS |
+| UT-safety-08 | `test_allow_with_an_unclear_verdict_check_becomes_escalate[reply1]` | Only an explicit boolean true keeps an ALLOW; anything else escalates. | PASS |
+| UT-safety-09 | `test_allow_with_an_unclear_verdict_check_becomes_escalate[reply2]` | Only an explicit boolean true keeps an ALLOW; anything else escalates. | PASS |
+| UT-safety-10 | `test_allow_with_an_unclear_verdict_check_becomes_escalate[reply3]` | Only an explicit boolean true keeps an ALLOW; anything else escalates. | PASS |
+| UT-safety-11 | `test_allow_with_an_unclear_verdict_check_becomes_escalate[plain words]` | Only an explicit boolean true keeps an ALLOW; anything else escalates. | PASS |
+| UT-safety-12 | `test_allow_with_an_unclear_verdict_check_becomes_escalate[]` | Only an explicit boolean true keeps an ALLOW; anything else escalates. | PASS |
+| UT-safety-13 | `test_allow_with_an_unclear_verdict_check_becomes_escalate[{broken]` | Only an explicit boolean true keeps an ALLOW; anything else escalates. | PASS |
+| UT-safety-14 | `test_allow_whose_verdict_check_raises_becomes_escalate` | An API failure while checking an ALLOW escalates instead of crashing or allowing. | PASS |
+| UT-safety-15 | `test_unknown_verdict_values_escalate[proceed]` | An unrecognised verdict is never read as permission. | PASS |
+| UT-safety-16 | `test_unknown_verdict_values_escalate[approved]` | An unrecognised verdict is never read as permission. | PASS |
+| UT-safety-17 | `test_unknown_verdict_values_escalate[ALLOWED]` | An unrecognised verdict is never read as permission. | PASS |
+| UT-safety-18 | `test_unknown_verdict_values_escalate[]` | An unrecognised verdict is never read as permission. | PASS |
+| UT-safety-19 | `test_unknown_verdict_values_escalate[None]` | An unrecognised verdict is never read as permission. | PASS |
+| UT-safety-20 | `test_unknown_verdict_values_escalate[5]` | An unrecognised verdict is never read as permission. | PASS |
+| UT-safety-21 | `test_unknown_verdict_values_escalate[verdict6]` | An unrecognised verdict is never read as permission. | PASS |
+| UT-safety-22 | `test_missing_verdict_key_escalates` | A reply with no verdict at all escalates. | PASS |
+| UT-safety-23 | `test_allow_with_only_invented_chunk_ids_escalates` | A claim 'supported' only by chunk ids that were never retrieved is dropped, so the ALLOW escalates. | PASS |
+| UT-safety-24 | `test_no_retrieved_evidence_escalates_without_calling_the_model` | With nothing retrieved there is no grounded decision: ESCALATE and no assessment call. | PASS |
+| UT-safety-25 | `test_unparseable_or_non_object_assessment_escalates[]` | Garbage from the model is escalated, with the retrieved evidence kept for the reviewer. | PASS |
+| UT-safety-26 | `test_unparseable_or_non_object_assessment_escalates[not json]` | Garbage from the model is escalated, with the retrieved evidence kept for the reviewer. | PASS |
+| UT-safety-27 | `test_unparseable_or_non_object_assessment_escalates[{broken]` | Garbage from the model is escalated, with the retrieved evidence kept for the reviewer. | PASS |
+| UT-safety-28 | `test_unparseable_or_non_object_assessment_escalates[null]` | Garbage from the model is escalated, with the retrieved evidence kept for the reviewer. | PASS |
+| UT-safety-29 | `test_unparseable_or_non_object_assessment_escalates[42]` | Garbage from the model is escalated, with the retrieved evidence kept for the reviewer. | PASS |
+| UT-safety-30 | `test_unparseable_or_non_object_assessment_escalates["allow"]` | Garbage from the model is escalated, with the retrieved evidence kept for the reviewer. | PASS |
+| UT-safety-31 | `test_unparseable_or_non_object_assessment_escalates[["allow"]]` | Garbage from the model is escalated, with the retrieved evidence kept for the reviewer. | PASS |
+| UT-safety-32 | `test_assessment_with_empty_content_or_no_choices_escalates` | A reply with content None or no choices escalates. | PASS |
+| UT-safety-33 | `test_model_errors_escalate_instead_of_crashing[error0]` | Any exception from the assessment call ends as an ESCALATE decision. | PASS |
+| UT-safety-34 | `test_model_errors_escalate_instead_of_crashing[error1]` | Any exception from the assessment call ends as an ESCALATE decision. | PASS |
+| UT-safety-35 | `test_model_errors_escalate_instead_of_crashing[error2]` | Any exception from the assessment call ends as an ESCALATE decision. | PASS |
+| UT-safety-36 | `test_a_model_allow_with_a_wrongly_typed_item_lists_still_cannot_allow` | Hazards sent as numbers or objects give no validated item, so the ALLOW escalates. | PASS |
+| UT-safety-37 | `test_a_string_instead_of_a_list_is_one_item_end_to_end` | A hazard sent as one string is validated as that one string, not letter by letter. | PASS |
+| UT-safety-38 | `test_unsupported_ppe_is_dropped_from_state_and_answer` | PPE the evidence does not support is neither reported in state nor shown to the engineer. | PASS |
+| UT-safety-39 | `test_unsupported_hazard_is_dropped_but_a_supported_one_keeps_the_allow` | Only validated hazards are reported; the ALLOW rests on the one that survived. | PASS |
+| UT-safety-40 | `test_ppe_alone_is_enough_to_back_an_allow` | A validated PPE item is a documented requirement: the ALLOW stands. | PASS |
+| UT-safety-41 | `test_the_verdict_check_only_sees_validated_controls` | The ALLOW check is told the controls that passed validation, not the invented ones. | PASS |
+| UT-safety-42 | `test_state_carries_safety_claims_with_their_supporting_chunk_ids` | Each validated item becomes a SafetyClaim tied to the passage that supports it. | PASS |
+| UT-safety-43 | `test_answer_cites_the_page_of_each_items_own_passage` | Each listed item carries the source marker of the passage that supports it. | PASS |
+| UT-safety-44 | `test_the_models_free_text_reason_is_never_shown` | The engineer sees the fixed, validated wording, not the model's own reason. | PASS |
+| UT-safety-45 | `test_retrieved_chunks_are_returned_with_full_provenance` | The state keeps the retrieved passages (source, page, section, score) for the explanation layer. | PASS |
+| UT-safety-46 | `test_escalation_helper_is_conservative_and_complete` | _escalation returns no hazards, PPE or claims and states the human-review requirement. | PASS |
+| UT-safety-47 | `test_missing_query_or_equipment_is_rejected_before_any_search[state0]` | No query or no equipment is a caller error: no search and no decision is made. | PASS |
+| UT-safety-48 | `test_missing_query_or_equipment_is_rejected_before_any_search[state1]` | No query or no equipment is a caller error: no search and no decision is made. | PASS |
+| UT-safety-49 | `test_missing_query_or_equipment_is_rejected_before_any_search[state2]` | No query or no equipment is a caller error: no search and no decision is made. | PASS |
+| UT-safety-50 | `test_missing_query_or_equipment_is_rejected_before_any_search[state3]` | No query or no equipment is a caller error: no search and no decision is made. | PASS |
+| UT-safety-51 | `test_missing_query_or_equipment_is_rejected_before_any_search[state4]` | No query or no equipment is a caller error: no search and no decision is made. | PASS |
+| UT-safety-52 | `test_resolved_query_is_used_in_preference_to_the_raw_query` | The resolved (follow-up aware) question is what is searched and assessed. | PASS |
+| UT-safety-53 | `test_search_runs_for_the_safety_query_then_the_engineers_wording` | Both queries are searched, safety query first, each with SEARCH_K passages. | PASS |
+| UT-safety-54 | `test_a_passage_found_only_by_the_engineers_wording_reaches_the_model` | Evidence found only with the engineer's own words is part of the assessed evidence. | PASS |
+| UT-safety-55 | `test_one_search_when_the_safety_query_equals_the_question` | No duplicate search when the generated query is the engineer's own sentence. | PASS |
+| UT-safety-56 | `test_an_empty_generated_query_falls_back_to_the_question` | A blank generated query still searches, with the engineer's wording. | PASS |
+| UT-safety-57 | `test_the_evidence_is_capped_at_the_maximum_passages` | Duplicates are removed and no more than MAX_SAFETY_PASSAGES reach the model. | PASS |
+| UT-safety-58 | `test_format_safety_context_lists_every_passage_with_provenance` | The evidence block names rank, chunk id, source, page, section and text of each passage. | PASS |
+| UT-safety-59 | `test_search_query_builder_cleans_the_reply_and_sends_the_request` | The generated query is stripped of quotes and spaces and built from the request and equipment. | PASS |
+
 ### unit/test_safety_grounding.py (35 tests)
 
 | ID | Test | Description | Result |
@@ -824,11 +1101,31 @@ Run with `pytest tests` (fake model, no key, no network). **Result: 341 tests, 3
 
 ## 11. Open items and limits
 
-- **Test files with no tests yet:** `integration/test_graph_flow.py`, `unit/test_diagnostic.py`, `unit/test_rag.py`, `unit/test_request.py`, `unit/test_routing.py`, `unit/test_safety.py`. The agents' own behaviour (request, routing, retrieval, diagnostic, safety, graph flow) is exercised through the Promptfoo live suite and DeepEval, but has no fast fake-model unit tests (plan item A5).
+- All test files contain tests.
 - The gold set has 16 questions; the plan asks for 30, reviewed by an SME.
 - Routing, request decisions and the judge are model-based, so repeat runs vary. Stability was checked for routing (section 6) but not for the request decision or grounding.
 - The live and DeepEval suites need the real key and the manuals, so they run locally, not in CI.
 - Retrieval hit rate is not measured yet: `eval/retrieval_eval.py` and `eval/datasets/retrieval_judgements.jsonl` are empty. The gold set already lists the expected manual section for each question.
 - Tokens and cost per request need Langfuse; not part of this run.
 - Grading used `gpt-4o-mini` as the judge for the live rubric tests and DeepEval. A stronger judge may score differently.
+
+## 12. Suspected source issues found while writing the agent unit tests
+
+Writing fake-model tests for the six agent test files exposed behaviours that look fragile. None is a confirmed crash in normal use, and nothing under `src/` was changed. Where a test pins today's behaviour (for example 'raises on malformed model output'), it will need updating if the code is hardened.
+
+| # | Where | Issue | Effect | Suggested change |
+|---|---|---|---|---|
+| S1 | `diagnostic_node` | `json.loads` of the model reply is not guarded; a reply such as `{not json`, `[]` or `null` raises out of the node | A malformed model reply fails the whole request (`unavailable`) instead of escalating | Catch parse errors and escalate with a reason |
+| S2 | `diagnostic_node` | `float(item.get('likelihood'))` raises for `"high"` or `null` | One bad likelihood crashes the diagnosis | Default to 0.0 on a bad value |
+| S3 | `diagnostic_node`, `_validate_diagnostic_claims` | `message.content.strip()` raises `AttributeError` when the model returns `None` content (a refusal or content filter) | Request fails | Treat `None` as an empty reply |
+| S4 | `diagnostic_node` | `list(item.get('supporting_chunk_ids'))` turns the string `'c1'` into `['c', '1']` | Claim silently dropped (safe but wrong) | Accept a single string as one id |
+| S5 | `diagnostic_node` | A cause or step whose text is empty is not filtered before validation | A wasted validator call, possible empty bullet | Skip empty text |
+| S6 | `run_retrieval_loop` (RAG) | No try/except around the junior agent's tool call: a missing tool call raises `RuntimeError`, non-JSON arguments raise `JSONDecodeError` | Request fails instead of falling back to a plain search or escalating | Fall back to searching the question |
+| S7 | `reformulate_query` (RAG) | The reformulated query is not validated; an empty one reaches `execute_tool`, which raises `ValueError` | Request aborts instead of escalating | Fall back to the original query or escalate |
+| S8 | `senior_review` (RAG) | An invalid decision such as `MAYBE` with `QUERY: foo` returns `ESCALATE` but keeps the model's query `foo` | Harmless today (the loop ignores it) | Clear the query when escalating |
+| S9 | `assess_retrieval` (RAG) | Only the exact word `GOOD` counts; `GOOD.` or `**GOOD**` is treated as POOR | Extra retrievals (fail-safe) | Strip punctuation and markdown before comparing |
+| S10 | `safety_node` | The deterministic safety rules are not called inside the node; they gate the request in `chat_service` before the agents. A direct call to the node depends only on the model's verdict | None through the API; a risk if the node is ever called from another entry point | Document that the gate is part of the safety design, or also apply the rules inside the node |
+| S11 | `safety_node` | When an ALLOW is rejected and escalated, the state still carries the validated hazards, PPE and claims | Arguably intended (the reviewer sees the evidence) | Decide and pin it with a test |
+
+S1 to S3 are the most worth fixing: a bad model reply should end in an escalation, which is the system's fail-safe, not in an unavailable error. S10 is a design note for the safety report.
 
