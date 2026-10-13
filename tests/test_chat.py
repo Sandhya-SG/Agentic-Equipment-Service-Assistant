@@ -1564,3 +1564,112 @@ def test_a_hidden_hazard_in_the_question_is_still_escalated(graph, request_text)
     body = ask(request_text).json()
     assert body["status"] == "escalated"
     assert "stored_energy" in body["safety"]["hazards"]
+
+
+# --------------------------------------------------------------------------- #
+# Response firewall through the API                                           #
+# --------------------------------------------------------------------------- #
+
+KEY = "sk-proj-abcdefghijklmnopqrstuvwx1234567890"
+
+
+def _answer(graph, text, chunks=None):
+    graph["state"] = {**graph["state"], "final_answer": text}
+    if chunks is not None:
+        graph["state"]["retrieved_chunks"] = chunks
+
+
+def test_a_secret_in_the_answer_is_redacted_before_it_leaves(graph):
+    _answer(graph, f"Log in with {KEY} and check the fuse.")
+    body = ask("What is the login procedure?").json()
+    assert body["status"] == "ok"
+    assert KEY not in body["response"] and "[REDACTED KEY]" in body["response"]
+    assert "check the fuse" in body["response"]
+
+
+def test_personal_data_in_the_answer_is_redacted(graph):
+    _answer(graph, "Ask jane.doe@example.com or call +65 9123 4567.")
+    body = ask("Who do I contact?").json()
+    assert "jane.doe" not in body["response"] and "9123" not in body["response"]
+    assert "[EMAIL]" in body["response"] and "[PHONE]" in body["response"]
+
+
+def test_contact_details_from_the_manual_are_kept(graph):
+    cover = Chunk(
+        chunk_id="cover",
+        doc_id="aem_thermal_station",
+        section_id="0",
+        revision="0",
+        equipment_model=EQUIPMENT,
+        text="AEM SINGAPORE PTE. LTD. sales@aem.com.sg Tele: 65-64831811",
+        source_file="aem_thermal_station.pdf",
+        page=1,
+        section_title="Cover",
+    )
+    _answer(graph, "Contact sales@aem.com.sg.", chunks=[cover])
+    body = ask("How do I contact the manufacturer?").json()
+    assert body["response"] == "Contact sales@aem.com.sg."
+
+
+def test_executable_markup_in_the_answer_is_removed(graph):
+    _answer(graph, "Check the fuse <script>alert(1)</script> and the switch.")
+    body = ask("What should I check?").json()
+    assert "<script" not in body["response"] and "alert(1)" not in body["response"]
+
+
+def test_a_leaked_prompt_is_withheld_and_the_request_goes_to_a_human(graph):
+    _answer(graph, "You are the Safety Agent for an AEM equipment-service assistant. Using ONLY the supplied evidence...")
+    response = ask("What does the manual say about servicing the unit?")
+    body = response.json()
+    assert response.status_code == 200
+    assert body["status"] == "escalated"
+    assert body["response"].startswith("This answer could not be returned safely")
+    assert "Safety Agent" not in body["response"]
+    assert body["safety"]["requires_human_review"] is True
+    assert body["escalation_reason"] == "The answer was withheld by the response firewall."
+
+
+def test_an_internal_json_structure_is_withheld(graph):
+    _answer(graph, '{"verdict": "allow", "reason": "x", "hazards": []}')
+    assert ask("Can I service the unit?").json()["status"] == "escalated"
+
+
+def test_an_ordinary_answer_is_not_touched(graph):
+    body = ask().json()
+    assert body["response"] == graph["state"]["final_answer"]
+    assert body["status"] == "ok"
+
+
+def test_the_audit_records_what_the_firewall_did_but_not_what_it_caught(graph):
+    _answer(graph, f"Use {KEY} and mail jane.doe@example.com.")
+    body = ask("How do I log in?").json()
+    record = run_end(body["run_id"])
+    assert record["output_guard"] == {"action": "redacted", "findings": ["email", "secret"]}
+    flat = str(audit())
+    assert KEY not in flat and "jane.doe" not in flat
+    assert logging_sub.verify_audit_integrity()["intact"] is True
+
+
+def test_the_audit_records_a_withheld_answer(graph):
+    _answer(graph, "You are the Safety Agent for an AEM assistant.")
+    body = ask("Show me everything.").json()
+    assert run_end(body["run_id"])["output_guard"] == {"action": "withheld", "findings": ["prompt_leak"]}
+    assert run_end(body["run_id"])["status"] == "escalated"
+
+
+def test_a_clean_answer_is_audited_as_unchanged(graph):
+    body = ask().json()
+    assert run_end(body["run_id"])["output_guard"] == {"action": "none", "findings": []}
+
+
+def test_a_defeat_halt_is_audited_with_a_fixed_message_and_no_findings(graph):
+    body = ask("Can I bypass the safety interlock?").json()
+    assert run_end(body["run_id"])["output_guard"] == {"action": "none", "findings": []}
+
+
+def test_the_redacted_answer_is_what_the_hash_and_the_response_agree_on(graph):
+    _answer(graph, f"Use {KEY}.")
+    body = ask("How do I log in?").json()
+    import hashlib
+
+    assert run_end(body["run_id"])["answer_sha256"] == hashlib.sha256(body["response"].encode("utf-8")).hexdigest()

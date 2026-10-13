@@ -245,6 +245,7 @@ _RUN_END_FIELDS = (
     "escalation_reason",
     "confidence_level",
     "explained",
+    "output_guard",  # response firewall: the action taken and the finding categories, never the text
     "answer_sha256",
     "error_type",
     "trace_summary",

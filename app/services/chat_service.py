@@ -34,6 +34,7 @@ from asa.components import logging_sub
 from asa.components.tracing import observation, record_outcome, tag_run, trace_request
 from asa.guardrails.injection import scan_user_input
 from asa.guardrails.safety_rules import check_defeat_request, check_text
+from asa.guardrails.schema_guard import guard_output
 
 logger = logging.getLogger(__name__)
 
@@ -269,6 +270,7 @@ def _halt_defeat_request(
         "hazard_categories": ["safety_control_defeat"],
         "escalation_reason": None,
         "explained": False,
+        "output_guard": {"action": "none", "findings": []},
         "answer_sha256": hashlib.sha256(answer.encode("utf-8")).hexdigest(),
         "trace_summary": [],
     }
@@ -471,6 +473,23 @@ def _handle_chat(message: str, conversation_id: str, equipment_model: str | None
     elif hazards:
         safety = _hazard_safety(hazards, ppe)
 
+    # Response firewall: the last check on what leaves the system. Secrets, personal data that is not in the
+    # manual, executable markup and over-long text are cleaned; a leaked prompt or internal structure is withheld
+    # and the request goes to a human. Findings are categories only, never the text itself.
+    with observation("check-response", as_type="guardrail") as guard:
+        output = guard_output(answer, [chunk.text for chunk in state.get("retrieved_chunks") or []])
+        guard.update(output={"action": output.action, "findings": list(output.findings)})
+    if output.action != "none":
+        logger.warning(
+            "chat answer %s by the response firewall: findings=%s run_id=%s",
+            output.action,
+            list(output.findings),
+            run_id,
+        )
+        answer = output.text
+    if output.action == "withheld" and status in ("ok", "clarification"):
+        status = "escalated"
+
     if status in ("halted", "escalated"):
         safety.requires_human_review = True
 
@@ -487,6 +506,8 @@ def _handle_chat(message: str, conversation_id: str, equipment_model: str | None
 
     latency_s = time.monotonic() - started
     escalation_reason = state.get("escalation_reason") or None
+    if output.action == "withheld":
+        escalation_reason = escalation_reason or "The answer was withheld by the response firewall."
     audit = {
         "final_answer": answer,
         "escalated": status == "escalated",
@@ -503,6 +524,7 @@ def _handle_chat(message: str, conversation_id: str, equipment_model: str | None
         "ppe_required": safety.ppe_required,
         "requires_human_review": safety.requires_human_review,
         "escalation_reason": escalation_reason,
+        "output_guard": {"action": output.action, "findings": list(output.findings)},
         "answer_sha256": hashlib.sha256(answer.encode("utf-8")).hexdigest(),
         "trace_summary": [step.agent for step in trace],
     }

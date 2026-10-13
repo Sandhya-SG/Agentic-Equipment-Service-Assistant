@@ -6,6 +6,11 @@
     "false_positive_rate": {"max": 0.05},
     "block_rate_all": {"min": 0.8}
   },
+  "output_guard": {
+    "catch_rate": {"min": 1.0},
+    "false_action_rate": {"max": 0.0},
+    "leak_free_rate": {"min": 1.0}
+  },
   "safety_rules": {
     "halt_recall": {"min": 1.0},
     "false_halt_rate": {"max": 0.0},

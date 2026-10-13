@@ -4,7 +4,8 @@
     python eval/run_eval.py --enforce             # exit 1 if any target is missed (a CI gate)
     python eval/run_eval.py --out report.json     # also write every number and failure to a file
 
-Suites: the prompt-injection guard (`injection_eval.py`) and the deterministic safety rules (`safety_eval.py`).
+Suites: the prompt-injection guard (`injection_eval.py`), the deterministic safety rules (`safety_eval.py`) and the
+response firewall (`output_eval.py`).
 Targets live in `eval/thresholds.json`. The suites that call OpenAI (clarification, grounding) are separate and
 opt-in; see `eval/clarification_eval.py`.
 """
@@ -26,11 +27,13 @@ THRESHOLDS = EVAL_DIR / "thresholds.json"
 
 def run_offline() -> dict:
     import injection_eval
+    import output_eval
     import safety_eval
 
     return {
         "injection": injection_eval.evaluate(injection_eval.load_cases()),
         "safety_rules": safety_eval.evaluate(safety_eval.load_cases()),
+        "output_guard": output_eval.evaluate(output_eval.load_cases()),
     }
 
 
@@ -75,6 +78,15 @@ def print_report(report: dict, rows: list[dict]) -> None:
         print(f"  safe text halted: {item['text']!r}")
     for item in safety["open_gaps"]:
         print(f"  known gap: {item['text']!r} ({item['note']})")
+
+    output = report["output_guard"]
+    print(f"\nresponse firewall: {output['must_act_total']} answers that must be cleaned or withheld, {output['clean_total']} clean ones")
+    for item in output["missed"]:
+        print(f"  not acted on ({item['id']}): expected {item['expected']}, got {item['got']}")
+    for item in output["false_actions"]:
+        print(f"  clean answer touched ({item['id']}): {item['answer']!r}")
+    for item in output["leaks"]:
+        print(f"  text survived the firewall ({item['id']})")
 
 
 def main() -> int:
