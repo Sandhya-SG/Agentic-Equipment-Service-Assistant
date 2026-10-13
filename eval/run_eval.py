@@ -105,7 +105,14 @@ def main() -> int:
     print(f"\n{len(rows) - len(missed)} of {len(rows)} targets met" + (" (report only)" if not args.enforce else ""))
 
     if args.out:
-        payload = {"created": datetime.now(timezone.utc).isoformat(), "targets": rows, "report": report}
+        from asa.versioning import build_info
+
+        payload = {
+            "created": datetime.now(timezone.utc).isoformat(),
+            "versions": build_info(include_datasets=True),  # code, models, prompts, manuals, datasets
+            "targets": rows,
+            "report": report,
+        }
         Path(args.out).write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
         print(f"report written to {args.out}")
 

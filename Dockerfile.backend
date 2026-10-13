@@ -30,6 +30,10 @@ COPY src/asa ./src/asa
 
 ENV PYTHONPATH=/app/src
 
+# The commit this image was built from (a container has no .git); shown on /version and in the audit log.
+ARG GIT_COMMIT=unknown
+ENV GIT_COMMIT=${GIT_COMMIT}
+
 # Build the manual index into the image so it is self-contained (no host folder is
 # needed on ECS/Fargate). Rebuild the image whenever the manuals change.
 COPY aem_documents ./aem_documents

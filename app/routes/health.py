@@ -27,3 +27,11 @@ async def readiness_check():
         "status": "ready",
         "service": "backend",
     }
+
+
+@router.get("/version")
+async def version_info():
+    """What this backend was built from: commit, models, prompt hashes and the manuals behind the index."""
+    from asa.versioning import build_info
+
+    return build_info()

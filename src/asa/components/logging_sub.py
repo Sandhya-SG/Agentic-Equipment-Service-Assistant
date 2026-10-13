@@ -166,6 +166,13 @@ def _append(path: Path, record: dict) -> bool:
 # --------------------------------------------------------------------------- #
 
 
+def _build_stamp() -> dict:
+    """Commit, prompt hash, corpus hash and models this run was made with (see `asa.versioning`)."""
+    from asa.versioning import audit_stamp
+
+    return audit_stamp()
+
+
 def start_run(raw_query: str) -> str:
     """Open a new run, returning a run_id used to correlate all later records."""
     run_id = uuid.uuid4().hex[:12]
@@ -176,6 +183,7 @@ def start_run(raw_query: str) -> str:
             "run_id": run_id,
             "timestamp": _now_iso(),
             "query": raw_query,
+            "build": _build_stamp(),
         },
     )
     return run_id
@@ -196,6 +204,7 @@ def log_blocked(conversation_id: str, categories: list[str], length: int) -> str
             "run_id": run_id,
             "timestamp": now,
             "query": "[withheld: blocked input]",
+            "build": _build_stamp(),
             "conversation_id": conversation_id,
         },
     )
