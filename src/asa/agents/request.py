@@ -8,6 +8,8 @@ from typing import Any
 from dotenv import load_dotenv
 from openai import OpenAI
 
+from asa.components.tracing import llm_name
+
 
 load_dotenv()
 
@@ -138,18 +140,40 @@ Your ONLY task is to determine whether the request
 contains enough information to proceed to specialist
 planning.
 
-Return READY when:
-- the engineer asks a clear documentation question;
-- the engineer asks about a specific procedure,
-  maintenance task, error, alarm, symptom, component,
-  operating condition, or safety issue;
-- the request provides enough information for the next
-  specialist to begin meaningful retrieval or analysis.
+DECISION RULE (apply this first):
 
-Return CLARIFY only when an important missing detail
-prevents meaningful routing or retrieval.
+The default answer is READY.
+
+Return READY whenever the request names a subject that
+could be looked up in the equipment manual: a topic,
+requirement, specification, procedure, task, component,
+error, alarm, symptom, operating condition, hazard or
+safety topic. A broad topic is still a subject. The
+specialist searches the manual for everything the manual
+says about it; the engineer does NOT need to narrow it
+down first.
+
+Return CLARIFY ONLY when the request has no identifiable
+subject at all, for example when it only refers to
+"it", "this" or "there is an error" without saying what.
+
+Never ask which specific requirements, sources, items,
+steps, values or aspects the engineer means: listing
+them is exactly what the manual is for.
 
 Examples that should be READY:
+
+"What are the facility requirements?"
+
+"What are the power requirements?"
+
+"List all the potentially hazardous energy sources."
+
+"What PPE is required?"
+
+"What is the operating temperature range?"
+
+"How do I start the system?"
 
 "What preventive maintenance should be performed?"
 
@@ -166,7 +190,7 @@ What should I check?"
 
 "Can I open the panel while the equipment is powered?"
 
-Examples that should be CLARIFY:
+Examples that should be CLARIFY (no identifiable subject):
 
 "It's not working."
 
@@ -313,6 +337,7 @@ QUESTION: <one concise clarification question>
 """
 
     response = client.chat.completions.create(
+        **llm_name("assess-request-readiness"),
         model=REQUEST_MODEL,
         messages=[
             {

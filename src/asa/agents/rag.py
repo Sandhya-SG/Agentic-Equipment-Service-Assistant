@@ -9,8 +9,50 @@ from typing import Any
 from dotenv import load_dotenv
 from openai import OpenAI
 
+from asa.components.tracing import llm_name, traced
 from asa.graph.state import Chunk
 from asa.ingestion.retrieval import AEMHybridRetriever
+
+# ----------------------------------------------------------------------
+# What the Langfuse observations record. Identifiers, pages and scores
+# only: chunk text stays out of the summaries (and all text is masked
+# unless LANGFUSE_CAPTURE_CONTENT=true).
+# ----------------------------------------------------------------------
+
+
+def _chunk_refs(chunks: list[Chunk]) -> list[dict[str, Any]]:
+    return [
+        {
+            "chunk_id": chunk.chunk_id,
+            "source_file": chunk.source_file,
+            "page": chunk.page,
+            "section_title": chunk.section_title,
+            "score": chunk.score,
+        }
+        for chunk in chunks or []
+    ]
+
+
+def _result_refs(results: Any) -> Any:
+    if not isinstance(results, list):
+        return results
+    return [
+        {key: item.get(key) for key in ("chunk_id", "source_file", "page", "section_title", "rrf_score")}
+        for item in results
+        if isinstance(item, dict)
+    ]
+
+
+def _loop_summary(retrieval: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "retrieval_status": retrieval.get("retrieval_status"),
+        "retrieval_attempts": retrieval.get("retrieval_attempts"),
+        "final_query": retrieval.get("final_query"),
+        "senior_used": retrieval.get("senior_used"),
+        "senior_decision": retrieval.get("senior_decision"),
+        "escalation_required": retrieval.get("escalation_required"),
+        "chunk_ids": [item.get("chunk_id") for item in retrieval.get("results") or []],
+    }
 
 
 class AgenticRAGAgent:
@@ -51,6 +93,13 @@ class AgenticRAGAgent:
     # Retrieval capability
     # ------------------------------------------------------------------
 
+    @traced(
+        "retrieve-manual-evidence",
+        as_type="retriever",
+        inputs=("query", "equipment_model", "k"),
+        output=_chunk_refs,
+        metadata=lambda chunks: {"chunk_count": len(chunks or []), "strategy": "hybrid"},
+    )
     def retrieve(
         self,
         query: str,
@@ -106,6 +155,12 @@ class AgenticRAGAgent:
             for item in results
         ]
 
+    @traced(
+        "search-service-documents",
+        as_type="tool",
+        inputs=("tool_name", "arguments"),
+        output=_result_refs,
+    )
     def execute_tool(
         self,
         tool_name: str,
@@ -237,6 +292,7 @@ class AgenticRAGAgent:
         tools = self.get_tool_definitions()
 
         response = self._get_client().chat.completions.create(
+            **llm_name("select-search-query"),
             model=self.junior_model,
             messages=messages,
             tools=tools,
@@ -379,6 +435,7 @@ POOR
 """
 
         response = self._get_client().chat.completions.create(
+            **llm_name("assess-retrieval"),
             model=self.junior_model,
             messages=[
                 {
@@ -452,6 +509,7 @@ Rules:
 """
 
         response = self._get_client().chat.completions.create(
+            **llm_name("reformulate-search-query"),
             model=self.junior_model,
             messages=[
                 {
@@ -472,6 +530,11 @@ Rules:
 
         return response.choices[0].message.content.strip()
 
+    @traced(
+        "senior-retrieval-agent",
+        as_type="agent",
+        inputs=("question", "equipment_model", "first_query", "second_query"),
+    )
     def senior_review(
         self,
         question: str,
@@ -545,6 +608,7 @@ Rules:
             """
 
         response = self._get_client().chat.completions.create(
+            **llm_name("review-failed-retrieval"),
             model=self.senior_model,
             messages=[
                 {
@@ -611,6 +675,12 @@ Rules:
             "query": query,
         }
 
+    @traced(
+        "junior-retrieval-agent",
+        as_type="agent",
+        inputs=("question", "equipment_model", "k"),
+        output=_loop_summary,
+    )
     def run_retrieval_loop(
         self,
         question: str,
@@ -912,6 +982,7 @@ Rules:
             """
 
         response = self._get_client().chat.completions.create(
+            **llm_name("generate-grounded-answer"),
             model=self.junior_model,
             messages=[
                 {

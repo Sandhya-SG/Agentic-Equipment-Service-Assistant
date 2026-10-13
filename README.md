@@ -490,16 +490,40 @@ again.
 seconds, tagged \`run:\<run_id\>\`, the same ID as the audit log and the
 API response.
 
-**\*\*What is traced:\*\*** the node-by-node LangGraph run, every OpenAI
-call with its token counts and latency, and scores for the outcome. The
-tracing code is \`src/asa/components/tracing.py\`; it is wired in at the
-API layer, so the agents themselves are not changed.
+**\*\*What is traced:\*\*** one trace per chat turn (\`chat-request\`),
+grouped into a session per conversation and tagged
+\`equipment:\<model\>\` and \`run:\<run_id\>\`. Inside it:
+
+\- the guardrails as \`guardrail\` observations
+(\`detect-prompt-injection\`, \`redact-pii\`, \`check-hazard-rules\`);
+
+\- the node-by-node LangGraph run (request, planning, specialist);
+
+\- every OpenAI call as a named generation with model, token counts and
+latency (\`assess-request-readiness\`, \`plan-specialist-route\`,
+\`select-search-query\`, \`assess-retrieval\`,
+\`generate-grounded-answer\`, \`assess-safety\`, \`generate-diagnosis\`,
+...);
+
+\- the Agentic RAG specialists as \`agent\` observations
+(\`junior-retrieval-agent\`, \`senior-retrieval-agent\`), the search tool
+as a \`tool\` and every manual lookup as a \`retriever\`
+(\`retrieve-manual-evidence\`, with chunk IDs, pages and scores);
+
+\- scores for the outcome: status, specialist, escalated, hazard count,
+source count and confidence.
+
+The tracing code is \`src/asa/components/tracing.py\`. Agents name their
+OpenAI calls with \`\*\*llm_name("verb-first-name")\` and mark steps with
+\`@traced(...)\`; both do nothing when tracing is off. Keep names stable:
+dashboards and evaluators filter on them.
 
 **\*\*Privacy:\*\*** by default traces contain no question, answer or
-manual text, only structure, timing, tokens and scores. Set
-\`LANGFUSE_CAPTURE_CONTENT=true\` to also keep text; it is PII-redacted
-and truncated first. Tests never send traces, even if real keys are in
-\`.env\`.
+manual text, only structure, timing, tokens, scores and short application
+identifiers (status, specialist, chunk IDs, source files, guardrail
+categories). Set \`LANGFUSE_CAPTURE_CONTENT=true\` to also keep text; it is
+PII-redacted and truncated first. Tests never send traces, even if real
+keys are in \`.env\`.
 
 **\*\*Security:\*\*** the passwords in \`docker-compose.langfuse.yml\`
 are local defaults only, and every port is bound to \`127.0.0.1\`. Run

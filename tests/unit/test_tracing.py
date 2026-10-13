@@ -8,9 +8,11 @@ from asa.graph.state import Chunk
 
 
 class FakeObservation:
-    def __init__(self):
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
         self.entered = False
         self.exit_args = None
+        self.updates = []
 
     def __enter__(self):
         self.entered = True
@@ -20,14 +22,22 @@ class FakeObservation:
         self.exit_args = (exc_type, exc)
         return False
 
+    def update(self, **fields):
+        self.updates.append(fields)
+
 
 class FakeTracer:
     def __init__(self):
         self.observation = FakeObservation()
+        self.started = []
         self.scores = []
 
     def start_as_current_observation(self, **kwargs):
-        return self.observation
+        # The first observation is `self.observation`, so existing tests can inspect the root.
+        observation = self.observation if not self.started else FakeObservation()
+        observation.kwargs = kwargs
+        self.started.append(observation)
+        return observation
 
     def score_current_trace(self, **kwargs):
         self.scores.append(kwargs)
@@ -73,6 +83,30 @@ def test_mask_drops_all_text_by_default_but_keeps_numbers_and_shape():
     }
     assert tracing.mask(data="some answer") == tracing._OMITTED
     assert tracing.mask(data=None) is None
+
+
+def test_mask_keeps_short_application_identifiers_by_default():
+    masked = tracing.mask(
+        data={
+            "status": "ok",
+            "specialist": "agentic_rag",
+            "categories": ["override", "exfiltration"],
+            "chunks": [{"chunk_id": "c1", "source_file": "aem.pdf", "section_title": "Fan check", "page": 4}],
+            "response": "Inspect the fan",
+        }
+    )
+    assert masked == {
+        "status": "ok",
+        "specialist": "agentic_rag",
+        "categories": ["override", "exfiltration"],
+        "chunks": [{"chunk_id": "c1", "source_file": "aem.pdf", "section_title": tracing._OMITTED, "page": 4}],
+        "response": tracing._OMITTED,
+    }
+
+
+def test_mask_drops_long_or_nested_text_even_under_an_identifier_key():
+    masked = tracing.mask(data={"status": "x" * 200, "decision": {"reason": "free text"}})
+    assert masked == {"status": tracing._OMITTED, "decision": {"reason": tracing._OMITTED}}
 
 
 def test_mask_redacts_and_truncates_when_capture_is_on(monkeypatch):
@@ -160,6 +194,79 @@ def test_mask_drops_objects_such_as_retrieved_chunks_by_default():
     masked = tracing.mask(data={"retrieved_chunks": [_chunk()], "retry_count": 1})
     assert "Warning Label" not in str(masked)
     assert masked["retry_count"] == 1
+
+
+def test_llm_name_is_empty_until_openai_is_instrumented(monkeypatch):
+    # A plain OpenAI client rejects `name=`, so it is only passed once Langfuse patched the SDK.
+    assert tracing.llm_name("assess-retrieval") == {}
+    monkeypatch.setattr(tracing, "_openai_instrumented", True)
+    assert tracing.llm_name("assess-retrieval") == {"name": "assess-retrieval"}
+
+
+def test_observation_is_a_noop_handle_without_keys():
+    with tracing.observation("detect-prompt-injection", as_type="guardrail") as step:
+        step.update(output={"flagged": False})
+
+
+def test_observation_starts_a_typed_observation_and_records_output(tracer):
+    with tracing.observation("redact-pii", as_type="guardrail", input={"n": 1}) as step:
+        step.update(output={"redacted": True})
+    assert tracer.observation.kwargs == {
+        "name": "redact-pii",
+        "as_type": "guardrail",
+        "input": {"n": 1},
+        "metadata": None,
+    }
+    assert tracer.observation.updates == [{"output": {"redacted": True}}]
+    assert tracer.observation.exit_args == (None, None)
+
+
+def test_observation_marks_errors_and_reraises(tracer):
+    with pytest.raises(ValueError):
+        with tracing.observation("check-hazard-rules", as_type="guardrail"):
+            raise ValueError("boom")
+    assert {"level": "ERROR", "status_message": "ValueError"} in tracer.observation.updates
+    assert tracer.observation.exit_args[0] is ValueError
+
+
+def test_traced_runs_the_function_untouched_without_keys():
+    @tracing.traced("retrieve-manual-evidence", as_type="retriever", inputs=("query",))
+    def retrieve(query, k=5):
+        return [query, k]
+
+    assert retrieve("fan noise", k=2) == ["fan noise", 2]
+
+
+def test_traced_records_only_the_named_inputs_and_the_summarised_output(tracer):
+    class Agent:
+        @tracing.traced(
+            "retrieve-manual-evidence",
+            as_type="retriever",
+            inputs=("query", "k"),
+            output=len,
+            metadata=lambda result: {"chunk_count": len(result)},
+        )
+        def retrieve(self, query, api_key="secret", k=5):
+            return ["chunk-1", "chunk-2"]
+
+    assert Agent().retrieve("fan noise", k=2) == ["chunk-1", "chunk-2"]
+    assert tracer.observation.kwargs["as_type"] == "retriever"
+    assert tracer.observation.kwargs["input"] == {"query": "fan noise", "k": 2}
+    assert tracer.observation.updates == [{"output": 2, "metadata": {"chunk_count": 2}}]
+
+
+def test_trace_request_yields_the_root_for_input_and_output(tracer):
+    with tracing.trace_request(session_id="s", equipment_model="thermal_station") as root:
+        root.update(input={"message": "q"})
+        root.update(output={"status": "ok"})
+    assert tracer.observation.kwargs == {"name": "chat-request", "as_type": "span"}
+    assert tracer.observation.updates == [{"input": {"message": "q"}}, {"output": {"status": "ok"}}]
+
+
+def test_record_outcome_adds_the_specialist_as_a_categorical_score(tracer):
+    tracing.record_outcome(status="ok", specialist="agentic_rag")
+    scores = {s["name"]: s for s in tracer.scores}
+    assert scores["specialist"] == {"name": "specialist", "value": "agentic_rag", "data_type": "CATEGORICAL"}
 
 
 def test_mask_redacts_text_inside_objects_when_capture_is_on(monkeypatch):

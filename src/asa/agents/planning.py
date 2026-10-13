@@ -8,6 +8,8 @@ from typing import Any
 from dotenv import load_dotenv
 from openai import OpenAI
 
+from asa.components.tracing import llm_name
+
 
 load_dotenv()
 
@@ -81,17 +83,31 @@ Engineer request:
 Choose exactly ONE specialist agent.
 
 SAFETY
-Use SAFETY when the request involves a safety-critical
-condition, hazardous action, unsafe operating request,
-interlock, emergency stop, protected access, hazardous
-energy, servicing safety, PPE, lockout, or another
-condition where safety controls must take priority.
+Use SAFETY when the engineer is going to DO something
+or is FACING something where safety controls must take
+priority:
+- asks whether an action is allowed, or how to perform
+  it safely (servicing, opening, accessing, bypassing,
+  defeating, overriding, operating, lockout);
+- describes a safety-critical condition that is active
+  now (emergency stop, tripped interlock, hazardous
+  energy present, unsafe operating state);
+- asks what precautions apply before or during a task.
 
 Examples:
 - "Can I bypass the safety interlock?"
 - "The emergency stop is active. What should I do?"
 - "Can I open the panel while the equipment is powered?"
 - "What safety precautions apply before servicing?"
+- "I need to replace the heater. What lockout steps must I follow?"
+- "Can I service the unit without wearing gloves?"
+
+A safety WORD alone (hazard, hazardous energy, PPE,
+interlock, safety device) does not make a request
+SAFETY. When the engineer only asks what the manual
+lists, specifies or documents about a safety topic, with
+no task being performed and no hazardous condition
+active, use AGENTIC_RAG.
 
 DIAGNOSTIC
 Use DIAGNOSTIC when the engineer describes an observed
@@ -114,13 +130,19 @@ documented information, such as:
 - documented component information;
 - error or alarm meaning;
 - manual/reference information;
-- documented servicing information.
+- documented servicing information;
+- documented safety information that is only being
+  looked up: hazard listings, hazardous energies, PPE
+  lists, safety devices, warning labels and symbols.
 
 Examples:
 - "What preventive maintenance should be performed?"
 - "What does error code E101 mean?"
 - "What is the documented startup procedure?"
 - "What does the manual say about the thermal controller?"
+- "List all the potentially hazardous energy sources."
+- "What PPE is required?"
+- "What safety devices does the system have?"
 
 ROUTING PRIORITY:
 
@@ -128,7 +150,8 @@ ROUTING PRIORITY:
 
 If a request contains both a troubleshooting symptom
 and a safety-critical condition or unsafe requested
-action, choose SAFETY.
+action, choose SAFETY. When it is unclear whether the
+engineer is about to perform a task, choose SAFETY.
 
 2. DIAGNOSTIC has priority over AGENTIC_RAG when the
 engineer is describing an actual observed equipment
@@ -157,6 +180,7 @@ REASON: <one brief reason>
 """
 
     response = client.chat.completions.create(
+        **llm_name("plan-specialist-route"),
         model=PLANNER_MODEL,
         messages=[
             {

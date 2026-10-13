@@ -405,6 +405,133 @@ def test_random_answers_never_break_the_invariants():
             assert norm(citation["quote"]) in norm(chunk_by_id(citation["chunk_id"]).text)
 
 
+SEMI_ANNUAL_SOURCE = "[Source: aem_thermal_station.pdf, page 118, section 11.1.1 Semi Annual Preventive Maintenance]"
+
+
+def test_a_marker_after_the_full_stop_cites_the_sentence_before_it():
+    # How the RAG agent actually writes citations: the marker follows the full stop.
+    explanation = explain(rag_state(final_answer=f"Spring washers must not be reused after removal. {SEMI_ANNUAL_SOURCE}"), "ok")
+    assert explanation["claims_checked"] == 1
+    assert explanation["claims_verified"] == 1
+    assert [(c["page"], c["chunk_id"]) for c in explanation["citations"]] == [(118, "c118")]
+
+
+def test_a_marker_before_the_full_stop_still_cites_its_sentence():
+    explanation = explain(rag_state(final_answer=f"Spring washers must not be reused after removal {SEMI_ANNUAL_SOURCE}."), "ok")
+    assert explanation["claims_verified"] == 1
+    assert [c["page"] for c in explanation["citations"]] == [118]
+
+
+def test_a_marker_on_its_own_line_cites_the_claim_above_it():
+    answer = f"1. **Labels**: Replace any warning label that is not legible or is peeling.\n{SEMI_ANNUAL_SOURCE}"
+    explanation = explain(rag_state(final_answer=answer), "ok")
+    assert explanation["claims_checked"] == 1
+    assert [c["page"] for c in explanation["citations"]] == [118]
+
+
+def test_a_trailing_marker_is_only_checked_against_the_page_it_cites():
+    # The sentence exists on page 117, but the answer cites page 118: the claim is not verified,
+    # rather than being silently matched to a different page than the one the user is shown.
+    answer = f"Power off the Thermal Station before performing any maintenance. {SEMI_ANNUAL_SOURCE}"
+    explanation = explain(rag_state(final_answer=answer), "ok")
+    assert explanation["claims_checked"] == 1
+    assert explanation["claims_verified"] == 0
+    assert explanation["citations"] == []
+
+
+def _contradiction_notes(explanation):
+    return [note for note in explanation["notes"] if "contradict" in note]
+
+
+def test_a_claim_that_drops_the_negation_is_not_verified():
+    # The manual says spring washers must NOT be reused; the claim says the opposite with the same words.
+    explanation = explain(rag_state(final_answer=f"Spring washers must be reused after removal. {SEMI_ANNUAL_SOURCE}"), "ok")
+    assert explanation["claims_verified"] == 0
+    assert explanation["citations"] == []
+    assert _contradiction_notes(explanation) == [
+        "1 claim(s) appear to contradict the cited manual sentence (negation or numbers differ): verify them."
+    ]
+
+
+def test_a_faithful_negative_claim_is_still_verified():
+    explanation = explain(rag_state(final_answer=f"Spring washers must not be reused after removal. {SEMI_ANNUAL_SOURCE}"), "ok")
+    assert explanation["claims_verified"] == 1
+    assert _contradiction_notes(explanation) == []
+
+
+INTERVAL = chunk(
+    "c118b",
+    118,
+    "11.1.1 Semi Annual Preventive Maintenance",
+    "Semi Annual Preventive Maintenance to be performed every 6 months by qualified personnel.",
+)
+
+
+def test_a_claim_with_a_different_number_is_not_verified():
+    answer = f"Semi annual preventive maintenance is performed every 3 months by qualified personnel. {SEMI_ANNUAL_SOURCE}"
+    explanation = explain(rag_state(final_answer=answer, retrieved_chunks=[INTERVAL]), "ok")
+    assert explanation["claims_verified"] == 0
+    assert len(_contradiction_notes(explanation)) == 1
+
+
+def test_a_claim_with_the_same_number_is_verified():
+    answer = f"Semi annual preventive maintenance is performed every 6 months by qualified personnel. {SEMI_ANNUAL_SOURCE}"
+    explanation = explain(rag_state(final_answer=answer, retrieved_chunks=[INTERVAL]), "ok")
+    assert explanation["claims_verified"] == 1
+    assert [c["chunk_id"] for c in explanation["citations"]] == ["c118b"]
+    assert _contradiction_notes(explanation) == []
+
+
+INVENTED = "Lubricate the compressor bearings with grade 5 grease every week"
+PEELING_LABELS = "Replace any warning label that is not legible or is peeling"
+
+
+def test_an_unverified_claim_caps_the_confidence_below_the_floor():
+    answer = f"{PEELING_LABELS}. {SEMI_ANNUAL_SOURCE}\n{INVENTED}. {SEMI_ANNUAL_SOURCE}"
+    result = explain(rag_state(final_answer=answer), "ok")
+    assert (result["claims_verified"], result["claims_checked"]) == (1, 2)
+    assert result["confidence"] <= 0.65 and result["confidence_level"] == "medium"
+    assert any("capped below 0.70" in note for note in result["notes"])
+
+
+def test_a_contradicted_claim_makes_the_confidence_low():
+    answer = f"{PEELING_LABELS}. {SEMI_ANNUAL_SOURCE}\nSpring washers must be reused after removal. {SEMI_ANNUAL_SOURCE}"
+    result = explain(rag_state(final_answer=answer), "ok")
+    assert result["confidence"] <= 0.45 and result["confidence_level"] == "low"
+
+
+def test_a_fully_verified_answer_is_not_capped():
+    result = explain(rag_state(), "ok")
+    assert result["confidence"] == 1.0
+    assert not any("capped" in note for note in result["notes"])
+
+
+def test_the_why_states_the_real_claim_counts():
+    all_matched = explain(rag_state(), "ok")["decision"]["why"]
+    assert all_matched == "Answered from 2 cited manual passage(s); 3 of 3 claim(s) were matched to a manual sentence."
+
+    half = f"{PEELING_LABELS}. {SEMI_ANNUAL_SOURCE}\n{INVENTED}. {SEMI_ANNUAL_SOURCE}"
+    assert explain(rag_state(final_answer=half), "ok")["decision"]["why"] == (
+        "Answered from 1 cited manual passage(s); 1 of 2 claim(s) were matched to a manual sentence."
+    )
+
+    none = f"{INVENTED}. {SEMI_ANNUAL_SOURCE}"
+    assert explain(rag_state(final_answer=none), "ok")["decision"]["why"] == (
+        "None of the 1 claim(s) could be matched to the 3 retrieved manual passage(s)."
+    )
+
+
+def test_citations_carry_the_fields_of_the_state_citation_contract():
+    result = explain(rag_state(), "ok")
+    assert result["citations"]
+    for citation in result["citations"]:
+        source = next(c for c in CHUNKS if c.chunk_id == citation["chunk_id"])
+        assert citation["doc_id"] == source.doc_id
+        assert citation["section_id"] == source.section_id
+        assert citation["revision"] == source.revision
+        assert citation["quote_span"] == citation["quote"]
+
+
 def test_a_citation_to_a_page_that_was_never_retrieved_does_not_verify():
     answer = "Power off the Thermal Station before maintenance [Source: aem_thermal_station.pdf, page 999, section 99.9 Invented]."
     result = explain(rag_state(final_answer=answer), "ok")
@@ -431,6 +558,64 @@ def test_page_headers_are_stripped_from_the_front_of_a_quote():
     assert quote.startswith("Replace any label") and "Rev 0" not in quote
 
 
+FACILITY_TABLE = chunk(
+    "c40",
+    40,
+    "3.4 Facility Specification",
+    "3-9\nRev 0\nAEM Thermal Station\nFacility\nWater\nFacility Water Supply\nTemperature Range\n15~25℃\n"
+    "Facility Water Return Pressure\n＜1.0bar\nElectrical\nPower Requirement\n380 ~ 420V/50Hz, 3-phase\n"
+    "Max Current\n50A\n",
+)
+TABLE_SOURCE = "[Source: aem_thermal_station.pdf, page 40, section 3.4 Facility Specification]"
+
+
+def test_a_claim_taken_from_a_specification_table_row_is_verified():
+    answer = f"The facility water supply temperature range is 15~25℃. {TABLE_SOURCE}"
+    result = explain(rag_state(final_answer=answer, retrieved_chunks=[FACILITY_TABLE]), "ok")
+    assert result["claims_verified"] == 1
+    quote = result["citations"][0]["quote"]
+    assert "Facility Water Supply Temperature Range 15~25" in quote
+    assert norm(quote) in norm(FACILITY_TABLE.text)  # still an exact stretch of the passage
+
+
+def test_a_wrong_value_from_a_specification_table_is_not_verified():
+    answer = f"The facility water supply temperature range is 15~35℃. {TABLE_SOURCE}"
+    result = explain(rag_state(final_answer=answer, retrieved_chunks=[FACILITY_TABLE]), "ok")
+    assert result["claims_verified"] == 0
+    assert any("contradict" in note for note in result["notes"])
+
+
+def test_a_table_row_is_quoted_from_its_own_label_not_from_the_row_before():
+    electrical = chunk(
+        "c33",
+        33,
+        "3.1 Facility Requirements",
+        "Item\nPhase Type\nVoltage\nWiring Configuration\nFull Load (Amps)\n"
+        "PDU\n3 phase, 5 wire\n415VAC\nL1,L2,L3,N,E\n63A\n"
+        "Chiller\n3 phase, 5 wire\n415VAC\nL1,L2,L3,N,E\n63A\n",
+    )
+    answer = "PDU: 3 phase, 5 wire, 415VAC, 63A full load [Source: aem_thermal_station.pdf, page 33, section 3.1]."
+    quote = explain(rag_state(final_answer=answer, retrieved_chunks=[electrical]), "ok")["citations"][0]["quote"]
+    assert quote.startswith("PDU") and "Chiller" not in quote
+
+
+def test_a_multi_line_table_of_contents_is_still_not_quoted():
+    toc = chunk(
+        "c7",
+        7,
+        "Contents",
+        "11 Maintenance 11-1\n11.1 Preventive Maintenance 11-2\n11.1.1 Daily Check 11-3\n11.1.2 Semi Annual Check 11-4\n",
+    )
+    answer = "Preventive maintenance includes the daily check and the semi annual check [Source: aem_thermal_station.pdf, page 7, section Contents]."
+    assert explain(rag_state(final_answer=answer, retrieved_chunks=[toc]), "ok")["citations"] == []
+
+
+def test_prose_sentences_are_still_preferred_over_table_rows():
+    result = explain(rag_state(), "ok")
+    for citation in result["citations"]:
+        assert citation["quote"].endswith((".", "!", "?"))  # whole sentences, not line fragments
+
+
 def test_table_of_contents_lines_are_not_quoted():
     toc = chunk(
         "c6",
@@ -449,3 +634,33 @@ def test_a_line_full_of_section_numbers_is_not_quotable_even_when_it_is_mostly_w
     line = "Preventive maintenance overview see 11.1 daily checks in 11.1.1 and semi annual checks in 11.1.2 for the thermal station"
     assert _is_furniture(line)
     assert not _is_furniture("Replace any label that is not legible or is peeling away from the panel surface.")
+
+
+# --------------------------------------------------------------------------- #
+# Short claims (hazard and PPE labels)                                        #
+# --------------------------------------------------------------------------- #
+
+GUIDELINES = chunk(
+    "c19",
+    19,
+    "2.2.2 General Safety Guidelines",
+    "Electrical Hazards: Hazardous voltages may exist and can cause electric shock or burns. "
+    "Thermal Hazards: Surfaces may be hot during operation.",
+)
+GUIDELINES_SOURCE = "[Source: aem_thermal_station.pdf, page 19, section 2.2.2 General Safety Guidelines]"
+
+
+def test_a_two_word_label_is_verified_when_both_words_are_in_the_cited_sentence():
+    result = explain(rag_state(final_answer=f"- Electrical Hazards {GUIDELINES_SOURCE}", retrieved_chunks=[GUIDELINES]), "ok")
+    assert result["claims_verified"] == 1
+    assert result["citations"][0]["quote"].startswith("Electrical Hazards")
+
+
+def test_a_one_word_claim_is_never_verified():
+    result = explain(rag_state(final_answer=f"- Electrical {GUIDELINES_SOURCE}", retrieved_chunks=[GUIDELINES]), "ok")
+    assert result["claims_verified"] == 0
+
+
+def test_a_two_word_label_missing_from_its_cited_page_is_not_verified():
+    result = explain(rag_state(final_answer=f"- Radiation Hazards {GUIDELINES_SOURCE}", retrieved_chunks=[GUIDELINES]), "ok")
+    assert result["claims_verified"] == 0

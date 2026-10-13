@@ -37,10 +37,14 @@ PENALTY_PER_RETRY = 0.15
 MAX_RETRY_PENALTY = 0.30
 ESCALATED_CAP = 0.30
 NO_CITATION_CAP = 0.40  # nothing could be quoted from the manual, so there is nothing to check
+UNVERIFIED_CAP = 0.65  # a claim without a quoted manual sentence keeps the answer below CONFIDENCE_FLOOR ("verify")
+CONTRADICTION_CAP = 0.45  # a claim that contradicts its manual sentence makes the answer "low"
 
 MIN_SHARED_WORDS = 3  # a quote must share at least this many content words with the claim ...
+MIN_SHORT_CLAIM_WORDS = 2  # ... or, for a shorter claim ("Electrical Hazards"), all of its words (never just one)
 MIN_MATCH = 0.30  # ... and be at least this similar to it (cosine of the content-word sets)
 MAX_SENTENCE_CHARS = 320  # longer "sentences" are merged table rows or lists, not quotable
+MAX_ROW_LINES = 6  # a table row quote spans at most this many cells (the PDF puts one cell per line)
 MAX_CITATIONS = 8
 MAX_QUOTE_CHARS = 300
 NO_EXPLANATION_STATUSES = {"clarification", "blocked", "unavailable"}
@@ -55,6 +59,11 @@ _STOP = frozenset(
     "a an and are as at be by for from has have in is it its of on or that the this to was were will with "
     "before after must should shall not do does can may if when any all each".split()
 )
+# Negation and numbers are what make a claim mean the opposite of, or something other than, its quote.
+# The similarity match ignores negation words (they are in _STOP), so these are checked separately.
+_NEGATION_WORDS = frozenset({"not", "no", "never", "cannot", "none", "nor", "without"})
+_TOKEN = re.compile(r"[a-z]+(?:'[a-z]+)?")
+_NUMBER = re.compile(r"\d+(?:\.\d+)?")
 _BULLET = re.compile(r"^[\s\-\*•\d\.\)]+")
 _HEADER = re.compile(
     r"^(safety decision|diagnostic assessment|documented|recommended|required)\b.*:\s*$", re.IGNORECASE
@@ -118,54 +127,168 @@ def _is_furniture(sentence: str) -> bool:
     return bool(tokens) and sum(t[0].isdigit() for t in tokens) / len(tokens) > 0.30
 
 
+_TOC_ENTRY = re.compile(r"^\d+(?:\.\d+)*\s+\S.*\s\d+-\d+$")  # "11.1 Preventive Maintenance 11-2"
+_ALPHA_WORD = re.compile(r"[A-Za-z]{3,}")
+
+
+def _table_rows(text: str) -> list[str]:
+    """Quote candidates for passages laid out as tables.
+
+    The PDF text puts every table cell on its own line and tables have no sentence punctuation, so a
+    whole table collapses into one over-long "sentence". A row is a short run of consecutive lines;
+    joined with single spaces it is still an exact stretch of the (white-space collapsed) passage.
+    """
+    lines = [" ".join(line.split()) for line in str(text).splitlines()]
+    lines = [line for line in lines if line]
+    rows = []
+    for start in range(len(lines)):
+        for size in range(1, MAX_ROW_LINES + 1):
+            window = lines[start : start + size]
+            if len(window) < size or _TOC_ENTRY.match(window[-1]):
+                break
+            row = " ".join(window)
+            if len(row) > MAX_SENTENCE_CHARS:
+                break
+            rows.append(row)
+    return rows
+
+
+def _is_row_furniture(row: str) -> bool:
+    """Specification rows are legitimately full of numbers, so the digit-share rule of _is_furniture
+    does not apply; table-of-contents fragments and rows without real words are still not quotable."""
+    return len(_SECTION_NUMBER.findall(row)) >= 2 or len(_ALPHA_WORD.findall(row)) < 2
+
+
 def _clean_quote(sentence: str) -> str:
     """Drop page furniture from the FRONT of the sentence; what is left is still a contiguous
     stretch of the passage, so the exact-substring rule keeps holding."""
     return _LEADING_FURNITURE.sub("", sentence).strip()
 
 
-def _best_quote(claim: str, chunks: list) -> tuple[str, Any] | None:
-    """The sentence of the given passages most similar to the claim (cosine of content words)."""
+def _negated(text: str) -> bool:
+    tokens = _TOKEN.findall(str(text).lower().replace("’", "'"))
+    return any(token in _NEGATION_WORDS or token.endswith("n't") for token in tokens)
+
+
+def _contradicts(claim: str, quote: str) -> bool:
+    """True when the quote cannot support the claim although their words match: one of them is
+    negated and the other is not, or the claim states a number the quote does not contain."""
+    if _negated(claim) != _negated(quote):
+        return True
+    return not set(_NUMBER.findall(claim)) <= set(_NUMBER.findall(quote))
+
+
+def _sentence_candidates(chunks: list):
+    for chunk in chunks:
+        for sentence in _sentences(_get(chunk, "text", "") or ""):
+            if not _is_furniture(sentence):
+                yield _clean_quote(sentence), chunk
+
+
+def _row_candidates(chunks: list):
+    for chunk in chunks:
+        for row in _table_rows(_get(chunk, "text", "") or ""):
+            if not _is_row_furniture(row):
+                yield _clean_quote(row), chunk
+
+
+def _find_quote(claim: str, chunks: list) -> tuple[tuple[str, Any] | None, bool]:
+    """The sentence of the given passages most similar to the claim (cosine of content words).
+
+    Prose sentences are tried first; table rows (see `_table_rows`) only when no sentence supports
+    the claim, so answers taken from specification tables can be verified too.
+
+    Returns `(quote and chunk, or None, contradicted)`. A similar sentence that contradicts the claim
+    (see `_contradicts`) is never used as its quote; `contradicted` is True when only such sentences
+    matched, so the claim stays unverified and the user can be told why.
+    """
     claim_words = _words(claim)
     if not claim_words:
-        return None
-    best: tuple[float, str, Any] | None = None
-    for chunk in chunks:
-        text = _get(chunk, "text", "") or ""
-        for sentence in _sentences(text):
-            if _is_furniture(sentence):
-                continue
-            quote = _clean_quote(sentence)
-            words = _words(quote)
-            shared = claim_words & words
-            if len(shared) < MIN_SHARED_WORDS or not words:
-                continue
-            score = len(shared) / ((len(claim_words) * len(words)) ** 0.5)
-            if score >= MIN_MATCH and (best is None or score > best[0]):
-                best = (score, quote, chunk)
+        return None, False
+    found, contradicted = _best_candidate(claim, claim_words, _sentence_candidates(chunks))
+    if found is None:
+        found, row_contradicted = _best_candidate(claim, claim_words, _row_candidates(chunks), rows=True)
+        contradicted = contradicted or row_contradicted
+    return (found, False) if found is not None else (None, contradicted)
+
+
+def _best_candidate(
+    claim: str, claim_words: set[str], candidates, rows: bool = False
+) -> tuple[tuple[str, Any] | None, bool]:
+    """The candidate quote most similar to the claim, skipping those that contradict it.
+
+    For table rows, a row that starts with the claim's leading term (its row label, for example
+    "PDU: ...") ranks above every row that does not, so a quote neither starts in the previous row
+    nor in a column header; the similarity decides within each group.
+    """
+    best: tuple[tuple[bool, float], str, Any] | None = None
+    contradicted = False
+    claim_label = _ALPHA_WORD.search(claim)
+    # A short claim (a hazard or PPE label) must share all of its words; a one-word claim never matches.
+    required = max(MIN_SHORT_CLAIM_WORDS, min(MIN_SHARED_WORDS, len(claim_words)))
+    for quote, chunk in candidates:
+        words = _words(quote)
+        shared = claim_words & words
+        if len(shared) < required or not words:
+            continue
+        score = len(shared) / ((len(claim_words) * len(words)) ** 0.5)
+        if score < MIN_MATCH:
+            continue
+        if _contradicts(claim, quote):
+            contradicted = True
+            continue
+        label = _ALPHA_WORD.search(quote) if rows and claim_label else None
+        starts_with_label = bool(label and label.group(0).lower() == claim_label.group(0).lower())
+        rank = (starts_with_label, score)
+        if best is None or rank > best[0]:
+            best = (rank, quote, chunk)
     if best is None:
-        return None
+        return None, contradicted
     quote, chunk = best[1], best[2]
     if quote not in _norm(_get(chunk, "text", "")):  # exact-substring rule: never invent a quote
-        return None
-    return quote[:MAX_QUOTE_CHARS], chunk
+        return None, False
+    return (quote[:MAX_QUOTE_CHARS], chunk), False
 
 
 def _citation(chunk: Any, quote: str) -> dict:
+    """One citation. `doc_id`, `section_id`, `revision` and `quote_span` are the fields of
+    `asa.graph.state.Citation` (the shared-state contract); `quote_span` is the same text as `quote`."""
     return {
         "source_file": _get(chunk, "source_file", ""),
         "page": _get(chunk, "page", 0),
         "section": _get(chunk, "section_title", "Unknown"),
         "quote": quote,
         "chunk_id": _get(chunk, "chunk_id", ""),
+        "doc_id": _get(chunk, "doc_id", ""),
+        "section_id": _get(chunk, "section_id", ""),
+        "revision": _get(chunk, "revision", ""),
+        "quote_span": quote,
     }
 
 
 # ------------------------------------------------------------------ claims
+def _marked_sentences(answer: str) -> list[str]:
+    """Sentences of the answer, each together with the citation markers that belong to it.
+
+    The RAG agent usually writes the marker AFTER the full stop (`Claim. [Source: ...]`), so a
+    plain sentence split leaves the marker on its own. A segment that holds only markers is
+    therefore attached to the sentence before it, which is the claim it cites.
+    """
+    sentences: list[str] = []
+    for segment in re.split(r"(?<=[.!?])\s+|\n+", answer):
+        if not segment.strip():
+            continue
+        if sentences and _SOURCE.search(segment) and not _clean_claim(segment):
+            sentences[-1] = f"{sentences[-1]} {segment}"
+        else:
+            sentences.append(segment)
+    return sentences
+
+
 def _claims_from_markers(answer: str, chunks: list) -> list[tuple[str, list, bool]]:
-    """RAG answers cite inline: `[Source: file, page N, section X]` after each claim."""
+    """RAG answers cite inline: `[Source: file, page N, section X]` before or after each claim."""
     claims = []
-    for sentence in re.split(r"(?<=[.!?])\s+|\n+", answer):
+    for sentence in _marked_sentences(answer):
         found = list(_SOURCE.finditer(sentence))
         if not found:
             continue
@@ -285,7 +408,9 @@ def _confidence_level(confidence: float) -> str:
     return "high"
 
 
-def _why(state: dict, status: str, n_sources: int) -> str:
+def _why(state: dict, status: str, n_sources: int, verified: int = 0, checked: int = 0) -> str:
+    """Why the answer has this status. For RAG answers the counts are the real ones, so the text
+    never claims more support than the citations show."""
     specialist = state.get("current_step")
     if status == "escalated":
         return str(
@@ -299,7 +424,15 @@ def _why(state: dict, status: str, n_sources: int) -> str:
         return str(state.get("safety_reason") or "The manual supports this when its documented controls are followed.")[
             :300
         ]
-    return f"Answered from {n_sources} retrieved manual passage(s); each cited claim was matched to a sentence of the manual."
+    retrieved = len(state.get("retrieved_chunks") or [])
+    if not checked:
+        return f"Answered from {retrieved} retrieved manual passage(s); no individual claim could be checked."
+    if not verified:
+        return f"None of the {checked} claim(s) could be matched to the {retrieved} retrieved manual passage(s)."
+    return (
+        f"Answered from {n_sources} cited manual passage(s); "
+        f"{verified} of {checked} claim(s) were matched to a manual sentence."
+    )
 
 
 def explain(state: dict, status: str) -> dict | None:
@@ -311,12 +444,14 @@ def explain(state: dict, status: str) -> dict | None:
     citations: list[dict] = []
     seen: set[tuple] = set()
     verified = 0
+    contradicted = 0
     # An escalation withholds the answer: quoting the manual would only support what the user is not shown.
     claims = [] if status == "escalated" else _collect_claims(state, chunks)
     for claim, preferred, strict in claims:
         candidates = preferred if strict else (preferred or chunks)
-        found = _best_quote(claim, candidates) if candidates else None
+        found, contradiction = _find_quote(claim, candidates) if candidates else (None, False)
         if not found:
+            contradicted += contradiction
             continue
         quote, chunk = found
         verified += 1
@@ -349,6 +484,11 @@ def explain(state: dict, status: str) -> dict | None:
             notes.append(
                 f"{unverified} of {len(claims)} claim(s) could not be matched to a manual sentence: verify them."
             )
+        if contradicted:
+            notes.append(
+                f"{contradicted} claim(s) appear to contradict the cited manual sentence "
+                "(negation or numbers differ): verify them."
+            )
     else:
         notes.append("No individual claims could be checked against the manual.")
     if not citations:
@@ -357,6 +497,14 @@ def explain(state: dict, status: str) -> dict | None:
     if retries:
         confidence -= min(PENALTY_PER_RETRY * retries, MAX_RETRY_PENALTY)
         notes.append(f"{retries} extra retrieval attempt(s) were needed.")
+    if unverified and citations:
+        # Without any citation NO_CITATION_CAP already applies, with its own note.
+        confidence = min(confidence, UNVERIFIED_CAP)
+        notes.append(
+            f"Not every claim is backed by a quoted manual sentence, so the confidence is capped below {CONFIDENCE_FLOOR:.2f}."
+        )
+    if contradicted:
+        confidence = min(confidence, CONTRADICTION_CAP)
     if status == "escalated" or state.get("escalated") or state.get("safety_verdict") == "escalate":
         confidence = min(confidence, ESCALATED_CAP)
         notes.append("The run escalated to a human, so the confidence is capped.")
@@ -373,7 +521,7 @@ def explain(state: dict, status: str) -> dict | None:
             "status": status,
             "specialist": state.get("current_step"),
             "verdict": state.get("safety_verdict") if state.get("current_step") == "safety" else None,
-            "why": _why(state, status, len({c["chunk_id"] for c in citations}) or len(chunks)),
+            "why": _why(state, status, len({c["chunk_id"] for c in citations}), verified, len(claims)),
         },
         "citations": citations[:MAX_CITATIONS],
         "claims_checked": len(claims),

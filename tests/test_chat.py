@@ -15,6 +15,7 @@ from app.services.clarification_store import (
 
 client = TestClient(app)
 REAL_EXPLAIN = chat_service._explain
+REAL_IS_STANDALONE = chat_service._is_standalone_request
 
 EQUIPMENT = "thermal_station"
 CHUNK = Chunk(
@@ -81,6 +82,9 @@ def graph(monkeypatch):
     # The pipeline tests do not depend on the explanation layer (it has its own tests); tests of the
     # hook itself bring the real function back.
     monkeypatch.setattr(chat_service, "_explain", lambda state, status: None)
+    # A message sent while a clarification is pending is treated as its answer unless a test says
+    # otherwise (the real check calls the Request Agent, i.e. OpenAI).
+    monkeypatch.setattr(chat_service, "_is_standalone_request", lambda message, equipment_model: False)
     return box
 
 
@@ -920,10 +924,12 @@ def test_chat_reports_halt_verdict(graph):
         "final_answer": "Safety decision: HALT. Do not bypass the interlock.",
         "retrieved_chunks": [CHUNK],
     }
-    body = ask("Can I disable the door interlock?").json()
+    # Not a request to defeat a control (that is halted before the agents): the agents' HALT is reported.
+    body = ask("Can I work inside the cabinet with the door open?").json()
     assert body["status"] == "halted"
     assert body["safety"]["requires_human_review"] is True
     assert "HALT" in body["response"]
+    assert graph["calls"], "the agents ran and their verdict was reported"
 
 
 def test_chat_reports_agent_escalation(graph):
@@ -1004,7 +1010,16 @@ def test_chat_records_the_outcome_on_the_trace(graph, monkeypatch):
     recorded = []
     monkeypatch.setattr(chat_service, "record_outcome", lambda **kwargs: recorded.append(kwargs))
     ask()
-    assert recorded == [{"status": "ok", "hazard_count": 0, "source_count": 1, "escalated": False, "confidence": None}]
+    assert recorded == [
+        {
+            "status": "ok",
+            "hazard_count": 0,
+            "source_count": 1,
+            "escalated": False,
+            "confidence": None,
+            "specialist": "agentic_rag",
+        }
+    ]
 
 
 # --------------------------------------------------------------------------- #
@@ -1169,3 +1184,294 @@ def test_requests_without_conversation_id_do_not_share_clarification_state(graph
 def test_conversation_id_is_kept_when_the_client_sends_one(graph):
     body = ask("hello there", conversation_id="my-own-conversation").json()
     assert body["conversation_id"] == "my-own-conversation"
+
+
+# --------------------------------------------------------------------------- #
+# Confidence floor (warn-only gate)                                           #
+# --------------------------------------------------------------------------- #
+
+
+def _explained_with(monkeypatch, confidence, level):
+    monkeypatch.setattr(
+        chat_service, "_explain", lambda state, status: {"confidence": confidence, "confidence_level": level}
+    )
+
+
+def test_an_answer_below_the_confidence_floor_is_shown_but_flagged_for_review(graph, monkeypatch):
+    _explained_with(monkeypatch, 0.65, "medium")
+    body = ask().json()
+    assert body["status"] == "ok"
+    assert body["response"] == graph["state"]["final_answer"]
+    assert body["safety"]["requires_human_review"] is True
+    assert body["safety"]["warning"] == (
+        "Low evidence confidence (0.65): verify with a qualified engineer before acting."
+    )
+    assert run_end(body["run_id"])["requires_human_review"] is True
+
+
+def test_an_answer_at_or_above_the_confidence_floor_gets_no_warning(graph, monkeypatch):
+    _explained_with(monkeypatch, 0.85, "high")
+    body = ask().json()
+    assert body["safety"]["requires_human_review"] is False
+    assert body["safety"]["warning"] is None
+
+
+def test_a_low_confidence_warning_is_added_to_a_hazard_warning(graph, monkeypatch):
+    _explained_with(monkeypatch, 0.4, "low")
+    graph["state"]["hazards"] = ["hot surface"]
+    body = ask().json()
+    assert body["status"] == "ok"
+    warning = body["safety"]["warning"]
+    assert warning.startswith("Hazards detected (hot surface).")
+    assert warning.endswith("Low evidence confidence (0.40): verify with a qualified engineer before acting.")
+
+
+# --------------------------------------------------------------------------- #
+# Sources: the passages the answer relies on                                  #
+# --------------------------------------------------------------------------- #
+
+
+def _chunk_on(page, section, chunk_id):
+    return Chunk(
+        chunk_id=chunk_id,
+        doc_id="aem_thermal_station",
+        section_id=f"s{page}",
+        revision="r",
+        equipment_model=EQUIPMENT,
+        text="passage text",
+        source_file="aem_thermal_station.pdf",
+        page=page,
+        section_title=section,
+    )
+
+
+RETRIEVED = [
+    _chunk_on(118, "11.1.1 Semi Annual Preventive Maintenance", "c118"),
+    _chunk_on(2, "Legal notice", "c2"),
+    _chunk_on(24, "Unknown", "c24"),
+]
+
+
+def test_sources_are_the_cited_passages_when_the_answer_has_citations(graph, monkeypatch):
+    graph["state"]["retrieved_chunks"] = RETRIEVED
+    citations = [
+        {"source_file": "aem_thermal_station.pdf", "page": 118, "section": "11.1.1 Semi Annual Preventive Maintenance"},
+        {"source_file": "aem_thermal_station.pdf", "page": 118, "section": "11.1.1 Semi Annual Preventive Maintenance"},
+    ]
+    monkeypatch.setattr(
+        chat_service,
+        "_explain",
+        lambda state, status: {"confidence": 0.9, "confidence_level": "high", "citations": citations},
+    )
+    body = ask().json()
+    assert body["sources"] == ["aem_thermal_station.pdf, p.118, 11.1.1 Semi Annual Preventive Maintenance"]
+    assert run_end(body["run_id"])["source_refs"] == body["sources"]
+
+
+def test_sources_fall_back_to_the_retrieved_passages_without_citations(graph, monkeypatch):
+    graph["state"]["retrieved_chunks"] = RETRIEVED
+    monkeypatch.setattr(
+        chat_service, "_explain", lambda state, status: {"confidence": 0.4, "confidence_level": "low", "citations": []}
+    )
+    body = ask().json()
+    assert body["sources"] == [
+        "aem_thermal_station.pdf, p.118, 11.1.1 Semi Annual Preventive Maintenance",
+        "aem_thermal_station.pdf, p.2, Legal notice",
+        "aem_thermal_station.pdf, p.24",
+    ]
+
+
+def test_sources_fall_back_to_the_retrieved_passages_without_an_explanation(graph):
+    graph["state"]["retrieved_chunks"] = RETRIEVED
+    body = ask().json()  # the fixture's explanation layer returns nothing
+    assert len(body["sources"]) == 3
+
+
+def test_an_unknown_section_is_left_out_of_the_source_label():
+    assert chat_service._source_label("a.pdf", 24, "Unknown") == "a.pdf, p.24"
+    assert chat_service._source_label("a.pdf", 24, None) == "a.pdf, p.24"
+    assert chat_service._source_label("a.pdf", 7, "2.1 Safety") == "a.pdf, p.7, 2.1 Safety"
+
+
+# --------------------------------------------------------------------------- #
+# Shared-state contract: "Explanation Module writes"                          #
+# --------------------------------------------------------------------------- #
+
+
+def test_the_explanation_is_recorded_in_the_shared_state(graph, monkeypatch):
+    from asa.graph.state import Citation
+
+    monkeypatch.setattr(chat_service, "_explain", REAL_EXPLAIN)
+    graph["state"]["sufficiency"] = True
+    body = ask().json()
+    state = graph["state"]
+    assert state["confidence"] == body["explanation"]["confidence"]
+    assert len(state["citations"]) == len(body["explanation"]["citations"])
+    for recorded, shown in zip(state["citations"], body["explanation"]["citations"]):
+        assert isinstance(recorded, Citation)
+        assert recorded.quote_span == shown["quote"]
+        assert (recorded.doc_id, recorded.section_id, recorded.revision) == (
+            shown["doc_id"],
+            shown["section_id"],
+            shown["revision"],
+        )
+
+
+def test_nothing_is_recorded_in_the_state_without_an_explanation(graph):
+    ask()  # the fixture's explanation layer returns nothing
+    assert "confidence" not in graph["state"]
+    assert "citations" not in graph["state"]
+
+
+# --------------------------------------------------------------------------- #
+# A new question while a clarification is pending                             #
+# --------------------------------------------------------------------------- #
+
+
+def _start_clarification(graph, conversation_id):
+    graph["state"] = {
+        "request_status": "CLARIFY",
+        "clarification_question": "What specific facility requirements are you referring to?",
+    }
+    assert ask("What are the facility requirements", conversation_id=conversation_id).json()["status"] == "clarification"
+    assert get_pending(conversation_id) is not None
+
+
+def _answer_next(graph):
+    graph["state"] = {
+        "request_status": "READY",
+        "current_step": "agentic_rag",
+        "final_answer": "The hazardous energies are listed in section 2.5.3.",
+        "retrieved_chunks": [CHUNK],
+        "escalated": False,
+    }
+
+
+def test_a_complete_new_question_is_not_merged_into_the_pending_clarification(graph, monkeypatch):
+    conversation_id = "new-question-test"
+    _start_clarification(graph, conversation_id)
+    checked = []
+    monkeypatch.setattr(
+        chat_service, "_is_standalone_request", lambda message, model: checked.append((message, model)) or True
+    )
+    _answer_next(graph)
+
+    body = ask("List all the potentially hazardous energy sources", conversation_id=conversation_id).json()
+
+    assert body["status"] == "ok"
+    assert checked == [("List all the potentially hazardous energy sources", EQUIPMENT)]
+    last_call = graph["calls"][-1]
+    assert last_call["message"] == "List all the potentially hazardous energy sources"
+    assert last_call["clarification_response"] is None
+    assert last_call["resolved_query"] is None
+    assert last_call["clarification_count"] == 0
+    assert get_pending(conversation_id) is None
+
+
+def test_a_short_answer_to_the_clarification_is_still_merged(graph):
+    # The fixture's standalone check says "not standalone", like the Request Agent would for this.
+    conversation_id = "short-answer-test"
+    _start_clarification(graph, conversation_id)
+    _answer_next(graph)
+
+    ask("the chiller water supply", conversation_id=conversation_id)
+
+    last_call = graph["calls"][-1]
+    assert last_call["clarification_response"] == "the chiller water supply"
+    assert "What are the facility requirements" in last_call["resolved_query"]
+    assert last_call["clarification_count"] == 1
+
+
+def test_a_failing_standalone_check_falls_back_to_merging(graph, monkeypatch):
+    import sys
+    import types
+
+    def broken(state):
+        raise RuntimeError("no network")
+
+    # A stand-in module: importing the real one would load .env (Langfuse keys) and create an OpenAI client.
+    monkeypatch.setitem(sys.modules, "asa.agents.request", types.SimpleNamespace(request_node=broken))
+    monkeypatch.setattr(chat_service, "_is_standalone_request", REAL_IS_STANDALONE)
+    conversation_id = "standalone-failure-test"
+    _start_clarification(graph, conversation_id)
+    _answer_next(graph)
+
+    ask("List all the potentially hazardous energy sources", conversation_id=conversation_id)
+
+    assert graph["calls"][-1]["clarification_response"] == "List all the potentially hazardous energy sources"
+
+
+# --------------------------------------------------------------------------- #
+# Requests to defeat a safety control                                         #
+# --------------------------------------------------------------------------- #
+
+
+def test_a_request_to_defeat_a_safety_control_is_halted_before_the_agents(graph):
+    body = ask("Can I bypass the safety interlock?").json()
+
+    assert body["status"] == "halted"
+    assert body["response"].startswith("Safety decision: HALT")
+    assert "safety control (interlock) is not permitted" in body["response"]
+    assert body["safety"]["requires_human_review"] is True
+    assert graph["calls"] == []  # no agent and no model ran
+    record = run_end(body["run_id"])
+    assert record["status"] == "halted"
+    assert record["safety_verdict"] == "halt"
+    assert record["requires_human_review"] is True
+
+
+def test_a_defeat_request_clears_a_pending_clarification(graph):
+    conversation_id = "defeat-after-clarification"
+    graph["state"] = {"request_status": "CLARIFY", "clarification_question": "Which issue?"}
+    ask("It's not working.", conversation_id=conversation_id)
+    assert get_pending(conversation_id) is not None
+
+    body = ask("Can I disable the emergency stop?", conversation_id=conversation_id).json()
+
+    assert body["status"] == "halted"
+    assert "(emergency stop)" in body["response"]
+    assert get_pending(conversation_id) is None
+
+
+def test_a_question_about_a_safety_control_still_reaches_the_agents(graph):
+    body = ask("How do I reset the emergency stop?").json()
+    assert body["status"] == "ok"
+    assert graph["calls"]
+
+
+def test_the_confidence_floor_is_defined_once():
+    from asa.components import logging_sub
+    from asa.graph import state
+
+    assert logging_sub.CONFIDENCE_FLOOR is state.CONFIDENCE_FLOOR
+    assert chat_service.CONFIDENCE_FLOOR is state.CONFIDENCE_FLOOR
+
+
+# --------------------------------------------------------------------------- #
+# Hazard warnings name each hazard once, briefly                              #
+# --------------------------------------------------------------------------- #
+
+
+def test_hazard_labels_are_short_readable_and_unique():
+    hazards = [
+        "Electrical Hazards: Hazardous voltages may exist and can cause electric shock or burns.",
+        "Mechanical Hazards: Components can move and impact personnel performing maintenance.",
+        "high_voltage",
+        "electrical hazards",
+    ]
+    assert chat_service._hazard_labels(hazards) == "Electrical Hazards, Mechanical Hazards, high voltage"
+
+
+def test_the_hazard_warning_names_hazards_but_the_list_keeps_the_details(graph):
+    detailed = "Electrical Hazards: Hazardous voltages may exist and can cause electric shock or burns."
+    graph["state"]["hazards"] = [detailed]
+    body = ask().json()
+    assert body["safety"]["warning"].startswith("Hazards detected (Electrical Hazards).")
+    assert detailed in body["safety"]["hazards"]  # the full text is still available to the interface
+
+
+def test_the_escalation_message_uses_readable_hazard_names(graph):
+    body = ask("How do I fix the 480V power unit?").json()
+    assert body["status"] == "escalated"
+    assert "(high voltage)" in body["response"]
+    assert "high_voltage" in body["safety"]["hazards"]

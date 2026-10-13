@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 from openai import OpenAI
 
 from asa.agents.rag import AgenticRAGAgent
+from asa.components.tracing import llm_name
 from asa.graph.state import (
     AgentState,
     Chunk,
@@ -130,6 +131,7 @@ UNSUPPORTED
 """
 
         response = client.chat.completions.create(
+            **llm_name("validate-diagnostic-cause"),
             model=DIAGNOSTIC_MODEL,
             messages=[
                 {
@@ -213,6 +215,7 @@ UNSUPPORTED
 """
 
         response = client.chat.completions.create(
+            **llm_name("validate-troubleshooting-step"),
             model=DIAGNOSTIC_MODEL,
             messages=[
                 {
@@ -508,6 +511,7 @@ do not include that check.
 """
 
     response = client.chat.completions.create(
+        **llm_name("generate-diagnosis"),
         model=DIAGNOSTIC_MODEL,
         messages=[
             {

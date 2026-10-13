@@ -36,7 +36,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from asa.graph.state import TraceEvent
+from asa.graph.state import CONFIDENCE_FLOOR, TraceEvent
 
 # --------------------------------------------------------------------------- #
 # Configuration                                                               #
@@ -351,7 +351,7 @@ def _read(path: Path) -> list[dict]:
 
 
 CONFIDENCE_LOW = 0.50  # below this the confidence level is "low"
-CONFIDENCE_FLOOR = 0.70  # below this an answer is flagged as low confidence (PRD escalation gate)
+# Below CONFIDENCE_FLOOR (from asa.graph.state, the single source) an answer is flagged as low confidence.
 
 
 def confidence_level(confidence: float) -> str:

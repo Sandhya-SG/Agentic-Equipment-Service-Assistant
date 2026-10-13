@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import contextvars
 import json
+import logging
 import os
-from typing import Any
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Callable
 
 from dotenv import load_dotenv
 from openai import OpenAI
 
 from asa.agents.rag import AgenticRAGAgent
+from asa.components.tracing import llm_name
 from asa.graph.state import (
     AgentState,
     Chunk,
@@ -27,6 +31,95 @@ client = OpenAI(
 SAFETY_MODEL = "gpt-4o-mini"
 
 rag_agent = AgenticRAGAgent()
+
+logger = logging.getLogger(__name__)
+
+# Per-item evidence checks run concurrently; each item still gets its own model call.
+MAX_PARALLEL_VALIDATIONS = 6
+
+SEARCH_K = 5  # passages per search
+MAX_SAFETY_PASSAGES = 6  # passages kept after merging the searches (the evidence in every prompt)
+
+
+def _merge_results(result_lists: list[list[dict[str, Any]]], limit: int) -> list[dict[str, Any]]:
+    """Merge ranked search results by taking turns between the lists, without duplicates.
+
+    The best passages of every search come first, so neither query can crowd out the other.
+    """
+    merged: list[dict[str, Any]] = []
+    seen: set[Any] = set()
+    for rank in range(max((len(results) for results in result_lists), default=0)):
+        for results in result_lists:
+            if rank < len(results) and results[rank].get("chunk_id") not in seen:
+                seen.add(results[rank].get("chunk_id"))
+                merged.append(results[rank])
+    return merged[:limit]
+
+
+def _run_parallel(tasks: list[Callable[[], Any]]) -> list[Any]:
+    """Run independent tasks concurrently and return their results in task order.
+
+    Each task runs in a copy of the caller's context, so the tracing context (the current
+    Langfuse observation) carries over and the model calls nest under the Safety step.
+    """
+    if not tasks:
+        return []
+    with ThreadPoolExecutor(max_workers=min(MAX_PARALLEL_VALIDATIONS, len(tasks))) as pool:
+        futures = [pool.submit(contextvars.copy_context().run, task) for task in tasks]
+        return [future.result() for future in futures]
+
+
+def _text_list(value: Any) -> list[str]:
+    """The non-empty strings of a model-supplied list.
+
+    A single string is one item (never iterated character by character); anything that is not a
+    list or a string gives no items. Every item is still grounded against the manual afterwards.
+    """
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if isinstance(item, (str, int, float)) and str(item).strip()]
+
+
+def _escalation(reason: str, retrieved_chunks: list[Chunk]) -> dict[str, Any]:
+    """A conservative ESCALATE decision: the safe outcome whenever no grounded decision can be made."""
+    return {
+        "retrieval_strategy": "hybrid",
+        "retrieved_chunks": retrieved_chunks,
+        "sufficiency": False,
+        "retry_count": 0,
+        "safety_verdict": "escalate",
+        "hazards": [],
+        "ppe_required": [],
+        "safety_claims": [],
+        "safety_reason": reason,
+        "escalated": True,
+        "escalation_reason": reason,
+        "final_answer": f"Safety decision: ESCALATE\n\n{reason} Human review is required.",
+    }
+
+
+def _source_marker(
+    item: str,
+    category: str,
+    safety_claims: list[SafetyClaim],
+    chunks: list[Chunk],
+) -> str:
+    """The citation of the first manual passage that supports a validated item.
+
+    Same format as the RAG agent's citations (`[Source: file, page N, section X]`), so the
+    explanation layer checks each safety item strictly against the page it cites.
+    """
+    by_id = {chunk.chunk_id: chunk for chunk in chunks}
+    for claim in safety_claims:
+        if claim.category != category or claim.text != item:
+            continue
+        for chunk_id in claim.supporting_chunk_ids:
+            chunk = by_id.get(chunk_id)
+            if chunk is not None:
+                return f"[Source: {chunk.source_file}, page {chunk.page}, section {chunk.section_title}]"
+    return ""
 
 
 def _format_safety_context(
@@ -117,6 +210,7 @@ Return only the search query.
 """
 
     response = client.chat.completions.create(
+        **llm_name("build-safety-search-query"),
         model=SAFETY_MODEL,
         messages=[
             {
@@ -252,6 +346,7 @@ If unsupported, return:
 """
 
         response = client.chat.completions.create(
+            **llm_name("validate-safety-claim"),
             model=SAFETY_MODEL,
             messages=[
                 {
@@ -312,57 +407,48 @@ If unsupported, return:
         # valid retrieved chunk supports it.
         return supported_ids
 
-    def validate_group(
-        items: list[str],
-        category: str,
-        item_type: str,
-    ) -> list[str]:
+    def checked(item: str, item_type: str) -> list[str]:
+        """Validate one item; a failed check is treated as unsupported, never as a crash."""
+        try:
+            return validate_item(item, item_type)
+        except Exception as exc:
+            logger.warning("safety claim not validated, treated as unsupported: %s", type(exc).__name__)
+            return []
 
-        valid_items = []
+    jobs = [
+        (item, category, item_type)
+        for items, category, item_type in (
+            (hazards, "hazard", "HAZARD"),
+            (ppe_required, "ppe", "PPE"),
+            (required_controls, "control", "REQUIRED_CONTROL"),
+        )
+        for item in items
+    ]
 
-        for item in items:
-            ids = validate_item(
-                item,
-                item_type,
+    results = _run_parallel(
+        [lambda item=item, item_type=item_type: checked(item, item_type) for item, _, item_type in jobs]
+    )
+
+    valid: dict[str, list[str]] = {"hazard": [], "ppe": [], "control": []}
+
+    for (item, category, _), ids in zip(jobs, results):
+        if not ids:
+            continue
+
+        valid[category].append(item)
+
+        safety_claims.append(
+            SafetyClaim(
+                category=category,
+                text=item,
+                supporting_chunk_ids=ids,
             )
-
-            if not ids:
-                continue
-
-            valid_items.append(item)
-
-            safety_claims.append(
-                SafetyClaim(
-                    category=category,
-                    text=item,
-                    supporting_chunk_ids=ids,
-                )
-            )
-
-        return valid_items
-
-    valid_hazards = validate_group(
-        hazards,
-        "hazard",
-        "HAZARD",
-    )
-
-    valid_ppe = validate_group(
-        ppe_required,
-        "ppe",
-        "PPE",
-    )
-
-    valid_controls = validate_group(
-        required_controls,
-        "control",
-        "REQUIRED_CONTROL",
-    )
+        )
 
     return (
-        valid_hazards,
-        valid_ppe,
-        valid_controls,
+        valid["hazard"],
+        valid["ppe"],
+        valid["control"],
         safety_claims,
     )
 
@@ -377,9 +463,18 @@ def _validate_safety_verdict(
     Validate the proposed Safety Agent verdict against
     retrieved AEM manual evidence.
 
-    A verdict that cannot be grounded conservatively is
-    converted to ESCALATE.
+    Only ALLOW is validated. HALT and ESCALATE are already
+    the cautious outcomes, so they are returned unchanged:
+    validation may only ever add caution, never turn a
+    prohibition into "insufficient evidence".
+
+    An ALLOW survives only when the validator explicitly
+    answers {"supported": true}; anything else (false,
+    malformed output, an API error) becomes ESCALATE.
     """
+
+    if candidate_verdict != "allow":
+        return candidate_verdict
 
     context = _format_safety_context(chunks)
 
@@ -436,33 +531,41 @@ Important rules:
 - Consider the engineer's actual requested action together
   with the documented requirements.
 
-Return exactly:
+Answer with a JSON object in exactly this structure:
 
-SUPPORTED
+{{"supported": true}}
 
 or
 
-UNSUPPORTED
+{{"supported": false}}
 """
 
-    response = client.chat.completions.create(
-        model=SAFETY_MODEL,
-        messages=[
-            {
-                "role": "system",
-                "content": ("You validate equipment safety verdicts strictly against supplied AEM manual evidence."),
-            },
-            {
-                "role": "user",
-                "content": prompt,
-            },
-        ],
-        temperature=0,
-    )
+    try:
+        response = client.chat.completions.create(
+            **llm_name("validate-safety-verdict"),
+            model=SAFETY_MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You validate equipment safety verdicts strictly against "
+                        "supplied AEM manual evidence and answer in JSON."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": prompt,
+                },
+            ],
+            temperature=0,
+            response_format={"type": "json_object"},
+        )
+        validation = json.loads(response.choices[0].message.content)
+    except Exception:
+        # Fail safe: an ALLOW that could not be validated is not an ALLOW.
+        return "escalate"
 
-    validation = response.choices[0].message.content.strip().upper()
-
-    if validation == "SUPPORTED":
+    if isinstance(validation, dict) and validation.get("supported") is True:
         return candidate_verdict
 
     return "escalate"
@@ -508,18 +611,38 @@ def safety_node(
     # Safety-oriented retrieval
     # --------------------------------------------------
 
-    safety_query = _build_safety_search_query(
-        question=question,
-        equipment_model=equipment_model,
-    )
+    try:
+        safety_query = _build_safety_search_query(
+            question=question,
+            equipment_model=equipment_model,
+        )
+    except Exception as exc:
+        logger.warning("safety search query not built, searching with the question: %s", type(exc).__name__)
+        safety_query = ""
+
+    # Without a generated query, search with the engineer's own question.
+    safety_query = safety_query or question
 
     print(f"Safety search query: {safety_query}")
 
-    results = rag_agent.search_service_documents(
-        query=safety_query,
-        equipment_model=equipment_model,
-        k=5,
-    )
+    # Search with the safety-requirement query AND the engineer's own wording: the manual may
+    # phrase the governing requirement either way. A failed search never crashes the request.
+    queries = [safety_query] + ([question] if question != safety_query else [])
+    result_lists = []
+
+    for query in queries:
+        try:
+            result_lists.append(
+                rag_agent.search_service_documents(
+                    query=query,
+                    equipment_model=equipment_model,
+                    k=SEARCH_K,
+                )
+            )
+        except Exception as exc:
+            logger.warning("safety search failed for one query: %s", type(exc).__name__)
+
+    results = _merge_results(result_lists, MAX_SAFETY_PASSAGES)
 
     retrieved_chunks = [
         Chunk(
@@ -538,22 +661,10 @@ def safety_node(
     ]
 
     if not retrieved_chunks:
-        reason = "No relevant AEM safety documentation was retrieved for this request."
-
-        return {
-            "retrieval_strategy": "hybrid",
-            "retrieved_chunks": [],
-            "sufficiency": False,
-            "retry_count": 0,
-            "safety_verdict": "escalate",
-            "hazards": [],
-            "ppe_required": [],
-            "safety_claims": [],
-            "safety_reason": reason,
-            "escalated": True,
-            "escalation_reason": reason,
-            "final_answer": (f"Safety decision: ESCALATE\n\n{reason} Human review is required."),
-        }
+        return _escalation(
+            "No relevant AEM safety documentation was retrieved for this request.",
+            [],
+        )
 
     # --------------------------------------------------
     # Evidence sufficient for Safety Agent assessment
@@ -712,30 +823,38 @@ Return VALID JSON only in this exact structure:
 }}
 """
 
-    response = client.chat.completions.create(
-        model=SAFETY_MODEL,
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "You are a conservative equipment "
-                    "Safety Agent. Make safety decisions "
-                    "only from supplied AEM manual evidence "
-                    "and return valid JSON."
-                ),
-            },
-            {
-                "role": "user",
-                "content": prompt,
-            },
-        ],
-        temperature=0,
-        response_format={"type": "json_object"},
-    )
-
-    raw = response.choices[0].message.content.strip()
-
-    safety = json.loads(raw)
+    try:
+        response = client.chat.completions.create(
+            **llm_name("assess-safety"),
+            model=SAFETY_MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a conservative equipment "
+                        "Safety Agent. Make safety decisions "
+                        "only from supplied AEM manual evidence "
+                        "and return valid JSON."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": prompt,
+                },
+            ],
+            temperature=0,
+            response_format={"type": "json_object"},
+        )
+        safety = json.loads(response.choices[0].message.content)
+        if not isinstance(safety, dict):
+            raise ValueError("the safety assessment is not a JSON object")
+    except Exception as exc:
+        # Fail safe: without a usable assessment the decision is ESCALATE, never a crash.
+        logger.warning("safety assessment failed, escalating: %s", type(exc).__name__)
+        return _escalation(
+            "The safety assessment could not be completed.",
+            retrieved_chunks,
+        )
 
     # --------------------------------------------------
     # Normalize verdict conservatively
@@ -766,32 +885,11 @@ Return VALID JSON only in this exact structure:
         )
     ).strip()
 
-    hazards = [
-        str(item).strip()
-        for item in safety.get(
-            "hazards",
-            [],
-        )
-        if str(item).strip()
-    ]
+    hazards = _text_list(safety.get("hazards"))
 
-    ppe_required = [
-        str(item).strip()
-        for item in safety.get(
-            "ppe_required",
-            [],
-        )
-        if str(item).strip()
-    ]
+    ppe_required = _text_list(safety.get("ppe_required"))
 
-    required_controls = [
-        str(item).strip()
-        for item in safety.get(
-            "required_controls",
-            [],
-        )
-        if str(item).strip()
-    ]
+    required_controls = _text_list(safety.get("required_controls"))
 
     # --------------------------------------------------
     # Safety grounding validation
@@ -812,6 +910,12 @@ Return VALID JSON only in this exact structure:
         required_controls=required_controls,
     )
 
+    # An ALLOW must rest on at least one validated hazard, PPE item
+    # or control: otherwise it would tell the engineer to proceed
+    # without a single documented requirement.
+    if verdict == "allow" and not (hazards or ppe_required or required_controls):
+        verdict = "escalate"
+
     verdict = _validate_safety_verdict(
         question=question,
         chunks=retrieved_chunks,
@@ -830,13 +934,14 @@ Return VALID JSON only in this exact structure:
         reason = (
             "The retrieved AEM manual evidence provides "
             "documented safety requirements applicable "
-            "to this request. Follow the validated "
-            "controls below."
+            "to this request. Follow the documented "
+            "safety requirements below."
         )
 
     elif verdict == "halt":
         reason = (
-            "The requested action conflicts with a documented safety requirement in the retrieved AEM manual evidence."
+            "The requested action conflicts with the documented safety requirements "
+            "in the retrieved AEM manual evidence (listed below with their sources)."
         )
 
     else:
@@ -856,23 +961,19 @@ Return VALID JSON only in this exact structure:
         reason,
     ]
 
-    if hazards:
-        answer_parts.append("\nDocumented hazards:")
+    for heading, category, items in (
+        ("Documented hazards:", "hazard", hazards),
+        ("Documented PPE:", "ppe", ppe_required),
+        ("Required documented controls:", "control", required_controls),
+    ):
+        if not items:
+            continue
 
-        for item in hazards:
-            answer_parts.append(f"- {item}")
+        answer_parts.append(f"\n{heading}")
 
-    if ppe_required:
-        answer_parts.append("\nDocumented PPE:")
-
-        for item in ppe_required:
-            answer_parts.append(f"- {item}")
-
-    if required_controls:
-        answer_parts.append("\nRequired documented controls:")
-
-        for item in required_controls:
-            answer_parts.append(f"- {item}")
+        for item in items:
+            source = _source_marker(item, category, safety_claims, retrieved_chunks)
+            answer_parts.append(f"- {item} {source}" if source else f"- {item}")
 
     answer = "\n".join(answer_parts)
 
