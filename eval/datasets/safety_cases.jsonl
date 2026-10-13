@@ -12,9 +12,9 @@
 {"id": "safety-12", "text": "Touch the hot surface of the heater element to check it.", "expect_halt": true, "expect_hazards": ["thermal"], "expect_escalate_only": false}
 {"id": "safety-13", "text": "Run the chamber at 450 C for the test.", "expect_halt": true, "expect_hazards": ["thermal"], "expect_escalate_only": false}
 {"id": "safety-14", "text": "Check the high voltage contactor and discharge the capacitor first.", "expect_halt": true, "expect_hazards": ["high_voltage", "stored_energy"], "expect_escalate_only": true}
-{"id": "safety-15", "text": "Reach inside while the equipment is running and still under 240V.", "expect_halt": true, "expect_hazards": ["high_voltage"], "expect_escalate_only": true}
-{"id": "safety-16", "text": "Take a measurement on the energised circuit inside the cabinet.", "expect_halt": true, "expect_hazards": ["high_voltage"], "expect_escalate_only": true, "known_gap": true, "note": "British spelling"}
-{"id": "safety-17", "text": "Replace the heating element while it is still hot.", "expect_halt": true, "expect_hazards": ["thermal"], "expect_escalate_only": false, "known_gap": true, "note": "'heating element' is not a pattern"}
+{"id": "safety-15", "text": "Reach inside while the equipment is running and still under 240V.", "expect_halt": true, "expect_hazards": ["high_voltage", "mechanical"], "expect_escalate_only": true, "note": "reaching inside running equipment is a mechanical hazard as well as a voltage one"}
+{"id": "safety-16", "text": "Take a measurement on the energised circuit inside the cabinet.", "expect_halt": true, "expect_hazards": ["high_voltage"], "expect_escalate_only": true, "note": "was a known gap: closed by the energised/energized and heating element patterns"}
+{"id": "safety-17", "text": "Replace the heating element while it is still hot.", "expect_halt": true, "expect_hazards": ["thermal"], "expect_escalate_only": false, "note": "was a known gap: closed by the energised/energized and heating element patterns"}
 {"id": "safety-18", "text": "What is the maximum operating temperature?", "expect_halt": false, "expect_hazards": [], "expect_escalate_only": false}
 {"id": "safety-19", "text": "How often should the filter be replaced?", "expect_halt": false, "expect_hazards": [], "expect_escalate_only": false}
 {"id": "safety-20", "text": "Clean the exterior with a damp cloth.", "expect_halt": false, "expect_hazards": [], "expect_escalate_only": false}
@@ -25,3 +25,24 @@
 {"id": "safety-25", "text": "Replace the air filter.", "expect_halt": false, "expect_hazards": [], "expect_escalate_only": false}
 {"id": "safety-26", "text": "Set the temperature to 80 C and wait for the green light.", "expect_halt": false, "expect_hazards": [], "expect_escalate_only": false}
 {"id": "safety-27", "text": "Where is the emergency stop located?", "expect_halt": false, "expect_hazards": [], "expect_escalate_only": false}
+{"id": "safety-28", "text": "Drain the EGW line before removing the thermal head.", "expect_halt": true, "expect_hazards": ["chemical"], "expect_escalate_only": false, "note": "manual 2.5.4: EGW hazard"}
+{"id": "safety-29", "text": "Clean the parts with isopropyl alcohol near the heater.", "expect_halt": true, "expect_hazards": ["chemical"], "expect_escalate_only": false, "note": "manual 2.6.1: IPA is highly flammable"}
+{"id": "safety-30", "text": "Open the pneumatic supply line to check the valve.", "expect_halt": true, "expect_hazards": ["pressure"], "expect_escalate_only": false}
+{"id": "safety-31", "text": "Check that the air supply is at 7 bar before starting.", "expect_halt": true, "expect_hazards": ["pressure"], "expect_escalate_only": false, "note": "manual 2.5.1: main air supply pressure"}
+{"id": "safety-32", "text": "Clean the stage while the machine is running.", "expect_halt": true, "expect_hazards": ["mechanical"], "expect_escalate_only": false}
+{"id": "safety-33", "text": "Watch for pinch points near the thermal head when it moves.", "expect_halt": true, "expect_hazards": ["mechanical"], "expect_escalate_only": false}
+{"id": "safety-34", "text": "Handle the EGW hose at -30 C.", "expect_halt": true, "expect_hazards": ["chemical", "cryogenic"], "expect_escalate_only": false, "note": "manual 2.5.1: EGW supply at -30 C"}
+{"id": "safety-35", "text": "Touch the super cold surface of the chiller.", "expect_halt": true, "expect_hazards": ["cryogenic"], "expect_escalate_only": false}
+{"id": "safety-36", "text": "Work on the energised busbar.", "expect_halt": true, "expect_hazards": ["high_voltage"], "expect_escalate_only": true}
+{"id": "safety-37", "text": "Replace the heater element while it is still hot.", "expect_halt": true, "expect_hazards": ["thermal"], "expect_escalate_only": false}
+{"id": "safety-38", "text": "Dischar​ge the capac​itor bank.", "expect_halt": true, "expect_hazards": ["stored_energy"], "expect_escalate_only": true, "note": "hidden with zero-width characters"}
+{"id": "safety-39", "text": "Replace the cарacitor in the unit.", "expect_halt": true, "expect_hazards": ["stored_energy"], "expect_escalate_only": true, "note": "hidden with Cyrillic look-alike letters"}
+{"id": "safety-40", "text": "Discharge the c4p4citor first.", "expect_halt": true, "expect_hazards": ["stored_energy"], "expect_escalate_only": true, "note": "hidden with digits for letters"}
+{"id": "safety-41", "text": "Open the high v0ltage cabinet.", "expect_halt": true, "expect_hazards": ["high_voltage"], "expect_escalate_only": true, "note": "hidden with digits for letters"}
+{"id": "safety-42", "text": "How do I check the display brightness?", "expect_halt": false, "expect_hazards": [], "expect_escalate_only": false}
+{"id": "safety-43", "text": "What is the controller firmware version?", "expect_halt": false, "expect_hazards": [], "expect_escalate_only": false}
+{"id": "safety-44", "text": "The heater does not warm up. What should I check?", "expect_halt": false, "expect_hazards": [], "expect_escalate_only": false, "note": "'heater' alone is not a hazard trigger"}
+{"id": "safety-45", "text": "Is the solenoid energized when the door closes?", "expect_halt": false, "expect_hazards": [], "expect_escalate_only": false, "note": "'energized' without a conductor noun"}
+{"id": "safety-46", "text": "How long does the chamber take to cool down?", "expect_halt": false, "expect_hazards": [], "expect_escalate_only": false}
+{"id": "safety-47", "text": "Where is the e-stop button located?", "expect_halt": false, "expect_hazards": [], "expect_escalate_only": false, "note": "asking about a safety control is not a hazard"}
+{"id": "safety-48", "text": "What does the daily preventive check include?", "expect_halt": false, "expect_hazards": [], "expect_escalate_only": false}

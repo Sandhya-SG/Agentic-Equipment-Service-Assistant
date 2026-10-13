@@ -23,7 +23,10 @@ INJECTION_CATEGORIES = {
     "safety_bypass",
     "data_exfiltration",
 }
-HAZARDS = {"high_voltage", "stored_energy", "esd", "lockout_tagout", "thermal"}
+from asa.guardrails.safety_rules import HARD_HALT_TRIGGERS  # noqa: E402
+
+# Read from the rules, so a hazard added there has to come with dataset cases (the coverage test below).
+HAZARDS = set(HARD_HALT_TRIGGERS)
 
 
 def _load(name):

@@ -29,6 +29,7 @@ import re
 from dataclasses import dataclass, field
 
 from asa.graph.state import Step
+from asa.guardrails.injection import text_variants
 
 # --------------------------------------------------------------------------- #
 # Hard-halt triggers — matching any of these forces an execution HALT          #
@@ -44,7 +45,11 @@ HARD_HALT_TRIGGERS: dict[str, list[str]] = {
         r"\b\d{3,}\s?V(?:AC|DC|olts?)?\b",  # 3+ digit voltages, e.g. 480V, 415VAC, 230 volts
         r"\bmains\b",
         r"\bpower\s+distribution\b",
-        r"\benergized\s+circuit",
+        # Both spellings, and "live": "energised circuit", "energized busbar", "live wiring".
+        r"\benergi[sz]ed\s+(?:circuits?|bus\s?bars?|conductors?|wiring|terminals?|cabinets?|panels?|electrical)\b",
+        r"\blive\s+(?:circuits?|bus\s?bars?|conductors?|wir(?:e|es|ing)|terminals?|cabinets?|panels?|parts?)\b",
+        r"\bwhile\s+(?:it\s+is\s+|it's\s+|still\s+)?(?:live|energi[sz]ed)\b",
+        r"\bbus\s?bars?\b",
     ],
     "stored_energy": [
         r"\bcapacitors?\b",
@@ -63,10 +68,48 @@ HARD_HALT_TRIGGERS: dict[str, list[str]] = {
         r"\bde[\s-]?energi[sz]e",
     ],
     "thermal": [
-        r"\bhot\s+surface",
+        r"\bhot\s+(?:surfaces?|plates?|chucks?|heads?|chambers?|liquids?|glycol|EGW)\b",
         r"\bburn\s+hazard\b",
         r"\b\d{3,}\s?°?\s?C\b",           # 3+ digit temperatures
-        r"\bheater\s+element\b",
+        r"\bheat(?:er|ing)\s+elements?\b",  # "heater element" and "heating element"
+        r"\b(?:still|too)\s+hot\b",
+        r"\bwhile\s+(?:it\s+is\s+|it's\s+)?hot\b",
+    ],
+    # The categories below come from the manual's own hazard listing (Thermal Station manual, 2.5.3 "Hazardous
+    # Energies Listing" and 2.6.1 "Warning of Using Isopropyl Alcohol"). They add warnings and PPE and ask for
+    # human review; they do not withhold the answer (only ESCALATE_ONLY_HAZARDS do), because the manual itself
+    # documents procedures that involve them (draining the EGW line, cleaning with IPA).
+    "chemical": [
+        r"\bEGW\b",
+        r"\bethylene\s+glycol\b",
+        r"\bglycol\b",
+        r"\bisopropyl\b",
+        r"\bIPA\b",
+        r"\bflammable\b",
+        r"\bcorrosive\b",
+        r"\btoxic\b",
+        r"\bsolvents?\b",
+    ],
+    "pressure": [
+        r"\bpneumatic\b",
+        r"\bhydraulic\b",
+        r"\bcompressed\s+air\b",
+        r"\bair\s+supply\b",
+        r"\b\d+(?:\.\d+)?\s?bar\b",
+        r"\bpressure\s+(?:lines?|supply|vessels?|relief)\b",
+    ],
+    "mechanical": [
+        r"\bpinch\s?points?\b",
+        r"\bcrush(?:ing|ed)?\b",
+        r"\bmoving\s+parts?\b",
+        r"\bautomatic\s+(?:operation|mode)\b",
+        r"\b(?:while|when)\s+(?:the\s+)?(?:machine|equipment|unit|system|station)\s+(?:is\s+)?(?:running|operating|in\s+operation|moving)\b",
+        r"\breach(?:ing)?\s+inside\b",
+    ],
+    "cryogenic": [
+        r"\bcryogenic\b",
+        r"\bsuper[\s-]?cold\b",
+        r"(?<![\w.])[-−–]\s?\d{2,3}\s?(?:°\s?)?C\b",  # -30 °C, -30C
     ],
 }
 
@@ -80,6 +123,12 @@ PPE_RULES: dict[str, list[str]] = {
     "esd": ["ESD wrist strap", "ESD-safe mat"],
     "lockout_tagout": ["lockout device", "personal lock and tag"],
     "thermal": ["heat-resistant gloves", "safety glasses"],
+    # From the manual's PPE and IPA sections: chemical-resistant gloves and chemical goggles for IPA, the
+    # standard PPE (goggles, steel-toe boots, gloves) for work around moving parts.
+    "chemical": ["chemical-resistant gloves", "chemical goggles"],
+    "pressure": ["safety glasses", "safety gloves"],
+    "mechanical": ["safety gloves", "safety boots (steel toe)"],
+    "cryogenic": ["cold-resistant gloves", "face shield"],
 }
 
 # Hazards that are NOT field-serviceable at all — these always escalate, even
@@ -99,18 +148,25 @@ _DEFEAT_WORDS = (
     r"bypass(?:ed|es|ing)?|defeat(?:ed|s|ing)?|disabl(?:e|ed|es|ing)|overrid(?:e|es|ing|den)|over-ride"
     r"|jumper(?:ed|s|ing)?|jump(?:ed|ing)?\s+out|short(?:ed|ing)?\s+out|circumvent(?:ed|s|ing)?"
     r"|deactivat(?:e|ed|es|ing)|tap(?:e|ed|ing)\s+down|ti(?:e|ed|ing)\s+down"
+    r"|get(?:ting)?\s+around|work(?:ing)?\s+around|trick(?:ed|ing)?|fool(?:ed|ing)?|cheat(?:ed|ing)?"
+    r"|unplug(?:ged|ging)?|disconnect(?:ed|ing)?|remov(?:e|ed|es|ing)|tak(?:e|es|ing)\s+off|rewir(?:e|ed|ing)"
 )
 
 # Safety control -> how it is named in the halt message.
 SAFETY_CONTROLS: dict[str, str] = {
     r"interlocks?": "interlock",
-    r"e-?stops?|emergency[\s-]+stops?": "emergency stop",
+    r"e-?stops?|emergency[\s-]+stops?|kill\s+switch(?:es)?|panic\s+buttons?": "emergency stop",
     r"emos?": "EMO",
     r"safety\s+switch(?:es)?": "safety switch",
-    r"safety\s+guards?": "safety guard",
-    r"light\s+curtains?": "light curtain",
+    r"(?:safety|machine|protective)\s+guards?": "safety guard",
+    r"light\s+(?:curtains?|barriers?)": "light curtain",
     r"safety\s+relays?": "safety relay",
     r"door\s+switch(?:es)?": "door switch",
+    r"safety\s+doors?|door\s+(?:locks?|latch(?:es)?)": "safety door",
+    r"thermal\s+cut[\s-]?(?:outs?|offs?)|tco": "thermal cut-off",
+    r"(?:pressure\s+)?relief\s+valves?": "relief valve",
+    r"over[\s-]?temp(?:erature)?\s+(?:protection|cut[\s-]?outs?|switch(?:es)?|limits?)": "over-temperature protection",
+    r"safety\s+(?:devices?|sensors?)": "safety device",
 }
 
 _MAX_WORDS_BETWEEN = 6
@@ -129,14 +185,16 @@ def check_defeat_request(text: str) -> str | None:
     Deterministic and final: a match halts the request before any agent or model runs, so no
     model can be talked into helping defeat a safety control.
     """
-    for sentence in re.split(r"(?<=[.!?])\s+|\n+", text or ""):
-        match = _DEFEAT_REQUEST.search(sentence)
-        if match:
-            control = " ".join((match.group("after") or match.group("before")).split())
-            for pattern, name in _COMPILED_CONTROLS:
-                if pattern.match(control):
-                    return name
-            return control.lower()
+    # Every decoded form too: "byp@ss the interl0ck" or look-alike letters must not hide the request.
+    for variant in text_variants(text or ""):
+        for sentence in re.split(r"(?<=[.!?])\s+|\n+", variant):
+            match = _DEFEAT_REQUEST.search(sentence)
+            if match:
+                control = " ".join((match.group("after") or match.group("before")).split())
+                for pattern, name in _COMPILED_CONTROLS:
+                    if pattern.match(control):
+                        return name
+                return control.lower()
     return None
 
 
@@ -168,13 +226,16 @@ def _scan(text: str) -> tuple[list[str], list[str]]:
     """Return (hazards_found, matched_phrases) for a block of text."""
     hazards: list[str] = []
     matched: list[str] = []
-    for hazard, patterns in _COMPILED_TRIGGERS.items():
-        for pat in patterns:
-            m = pat.search(text)
-            if m:
-                if hazard not in hazards:
-                    hazards.append(hazard)
-                matched.append(m.group(0).strip())
+    # The text as typed and every decoded form, so look-alike letters, zero-width characters, digits for
+    # letters and base64 cannot hide a hazard.
+    for variant in text_variants(text or ""):
+        for hazard, patterns in _COMPILED_TRIGGERS.items():
+            for pat in patterns:
+                m = pat.search(variant)
+                if m:
+                    if hazard not in hazards:
+                        hazards.append(hazard)
+                    matched.append(m.group(0).strip())
     return hazards, matched
 
 

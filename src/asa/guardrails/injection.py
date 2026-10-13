@@ -192,6 +192,15 @@ def _variants(text: str) -> list[tuple[str, str | None]]:
     return variants
 
 
+def text_variants(text: str) -> list[str]:
+    """The text and every decoded form of it (look-alike letters, digits for letters, base64 ...).
+
+    Shared with the deterministic safety rules so a hazard or a request to defeat a safety control cannot be
+    hidden the same ways an injection can.
+    """
+    return [variant for variant, _ in _variants(text)]
+
+
 # --------------------------------------------------------------------------- #
 # Results                                                                     #
 # --------------------------------------------------------------------------- #
