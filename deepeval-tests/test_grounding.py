@@ -20,6 +20,7 @@ insufficient), have no grounded answer to score. They are skipped and counted, b
 finding in itself (over-asking, retrieval misses), reported in the summary.
 """
 
+import hashlib
 import json
 import os
 import statistics
@@ -40,6 +41,8 @@ from conftest import (
 )
 from deepeval.metrics import AnswerRelevancyMetric, FaithfulnessMetric, GEval
 from deepeval.test_case import LLMTestCase, LLMTestCaseParams
+
+from asa.versioning import build_info
 
 GOLD = load_gold_set()
 SCORES: dict = {"cases": {}, "skipped": {}, "errors": {}, "judge_fallbacks": {}, "resumed": []}
@@ -68,6 +71,32 @@ FAITHFULNESS = "FaithfulnessMetric"
 RELEVANCY = "AnswerRelevancyMetric"
 INVENTED = "No invented specifics"
 THRESHOLDS = {FAITHFULNESS: FAITHFULNESS_THRESHOLD, RELEVANCY: RELEVANCY_THRESHOLD, INVENTED: INVENTED_THRESHOLD}
+
+
+INVENTED_CRITERIA = (
+    "Every specific value, part name, tool, warning and procedure step in the actual output must "
+    "appear in, or follow directly from, the retrieval context (the manual passages). Penalise any "
+    "number, torque, temperature, time, step or safety instruction that the context does not "
+    "contain. General connecting words are fine."
+)
+
+# The rubric: everything that decides what a score means. Bump RUBRIC_VERSION when the definition of grounded or
+# relevant changes on purpose; the hash changes by itself when a threshold, the repeat count or the criteria text do,
+# so two results can be compared only if their rubric hashes match.
+RUBRIC_VERSION = "2"
+
+
+def rubric() -> dict:
+    definition = {
+        "grounded": f"{FAITHFULNESS} >= {FAITHFULNESS_THRESHOLD} and {INVENTED} >= {INVENTED_THRESHOLD}",
+        "relevant": f"{RELEVANCY} >= {RELEVANCY_THRESHOLD}",
+        "invented_criteria": INVENTED_CRITERIA,
+        "repeats": REPEATS,
+        "statistic": "median of the repeats",
+        "targets": {"grounding": GROUNDING_TARGET, "relevancy": RELEVANCY_TARGET},
+    }
+    digest = hashlib.sha256(json.dumps(definition, sort_keys=True).encode()).hexdigest()
+    return {"version": RUBRIC_VERSION, "sha256": digest, **definition}
 
 
 def _case(item: dict, state: dict) -> LLMTestCase:
@@ -101,12 +130,7 @@ def _metrics(model: str):
         AnswerRelevancyMetric(threshold=RELEVANCY_THRESHOLD, model=model, include_reason=True),
         GEval(
             name=INVENTED,
-            criteria=(
-                "Every specific value, part name, tool, warning and procedure step in the actual output must "
-                "appear in, or follow directly from, the retrieval context (the manual passages). Penalise any "
-                "number, torque, temperature, time, step or safety instruction that the context does not "
-                "contain. General connecting words are fine."
-            ),
+            criteria=INVENTED_CRITERIA,
             evaluation_params=[
                 LLMTestCaseParams.ACTUAL_OUTPUT,
                 LLMTestCaseParams.RETRIEVAL_CONTEXT,
@@ -217,6 +241,9 @@ def _summary() -> dict:
     spreads = [c["spread"][name] for c in cases.values() for name in THRESHOLDS]
     return {
         "judge_model": JUDGE_MODEL,
+        "fallback_judge_model": FALLBACK_JUDGE,
+        "rubric": rubric(),
+        "versions": build_info(include_datasets=True),  # code, models, prompts, manuals, datasets
         "repeats": REPEATS,
         "judge_fallbacks": dict(SCORES["judge_fallbacks"]),  # question -> the other judge used for it
         "resumed": list(SCORES["resumed"]),  # questions kept from an earlier session of the same run

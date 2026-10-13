@@ -20,6 +20,7 @@ import ast
 import hashlib
 import json
 import os
+import re
 import subprocess
 from functools import lru_cache
 from pathlib import Path
@@ -225,6 +226,51 @@ def dataset_version(root: Path | None = None) -> dict | None:
         return None
     combined = _sha256_bytes("\n".join(f"{name}:{sha}" for name, sha in files.items()).encode())
     return {"sha256": combined, "files": files}
+
+
+PROMPTFOO_DIR = "promptfoo-tests"
+PROMPTFOO_FILES = ("*.yaml", "*.js")
+_GRADER = re.compile(r"provider:\s*(openai:[\w.\-]+)")
+
+
+def promptfoo_config(root: Path | None = None) -> dict | None:
+    """A hash of the Promptfoo suites (configs, assertion library, generators, provider) and the grader models they
+    name; None where the folder is not present."""
+    root = Path(root) if root else REPO_ROOT
+    folder = root / PROMPTFOO_DIR
+    if not folder.is_dir():
+        return None
+    files = {}
+    for pattern in PROMPTFOO_FILES:
+        for path in sorted(folder.glob(pattern)):
+            files[path.name] = _sha256_file(path)
+    graders = sorted(
+        {
+            match
+            for path in folder.glob("*.yaml")
+            for match in _GRADER.findall(path.read_text(encoding="utf-8", errors="ignore"))
+        }
+    )
+    combined = _sha256_bytes("\n".join(f"{name}:{sha}" for name, sha in files.items()).encode())
+    return {"sha256": combined, "files": files, "graders": graders}
+
+
+def compare(expected: dict, actual: dict) -> list[str]:
+    """What differs between two `build_info()` results (for example this checkout against a running backend).
+    An empty list means the same build. Compares the commit, the prompts, the corpus and the models."""
+    problems = []
+    commit_a, commit_b = expected["git"]["commit"], actual["git"]["commit"]
+    if "unknown" in (commit_a, commit_b):
+        problems.append(f"commit cannot be compared: expected {commit_a[:12]}, running {commit_b[:12]}")
+    elif not (commit_a.startswith(commit_b) or commit_b.startswith(commit_a)):
+        problems.append(f"commit differs: expected {commit_a[:12]}, running {commit_b[:12]}")
+    if expected["prompts"]["sha256"] != actual["prompts"]["sha256"]:
+        problems.append("system prompts differ")
+    if ((expected.get("corpus") or {}).get("sha256")) != ((actual.get("corpus") or {}).get("sha256")):
+        problems.append("manual corpus differs (the index was built from other PDFs)")
+    if expected["models"] != actual["models"]:
+        problems.append("models differ")
+    return problems
 
 
 # --------------------------------------------------------------------------- #
