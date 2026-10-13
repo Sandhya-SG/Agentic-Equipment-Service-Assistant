@@ -53,6 +53,9 @@ spec:
             - name: OPENAI_API_KEY
               valueFrom:
                 secretKeyRef: {name: aem-secrets, key: OPENAI_API_KEY}
+            - name: VERSION_TOKEN                   # protects GET /version; without it the endpoint is off here
+              valueFrom:
+                secretKeyRef: {name: aem-secrets, key: VERSION_TOKEN, optional: true}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true            # writable paths are the mounted volumes below

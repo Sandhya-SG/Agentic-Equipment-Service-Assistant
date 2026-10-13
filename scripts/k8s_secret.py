@@ -19,6 +19,7 @@ from pathlib import Path
 NAMESPACE = "aem"
 SECRET_NAME = "aem-secrets"
 KEYS = ("OPENAI_API_KEY",)
+OPTIONAL_KEYS = ("VERSION_TOKEN",)  # stored when set in .env or the environment
 
 
 def find_kubectl() -> str:
@@ -42,10 +43,12 @@ def main() -> None:
         pass
 
     values = {key: os.getenv(key, "").strip() for key in KEYS}
+    optional = {key: os.getenv(key, "").strip() for key in OPTIONAL_KEYS if os.getenv(key, "").strip()}
     missing = [key for key, value in values.items() if not value]
     if missing:
         sys.exit(f"Missing in .env or the environment: {', '.join(missing)}")
 
+    values.update(optional)
     kubectl = find_kubectl()
     fd, temp_path = tempfile.mkstemp(suffix=".env")
     try:
@@ -76,7 +79,7 @@ def main() -> None:
 
     if applied.returncode != 0:
         sys.exit(f"kubectl apply failed: {applied.stderr.strip()}")
-    print(f"secret/{SECRET_NAME} configured in namespace {NAMESPACE} (keys: {', '.join(KEYS)})")
+    print(f"secret/{SECRET_NAME} configured in namespace {NAMESPACE} (keys: {', '.join(values)})")
 
 
 if __name__ == "__main__":

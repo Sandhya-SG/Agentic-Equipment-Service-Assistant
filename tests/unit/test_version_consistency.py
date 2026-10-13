@@ -209,12 +209,28 @@ def test_version_needs_the_token_when_one_is_set(monkeypatch):
     assert client.get("/version", headers={"X-Version-Token": "s3cret"}).status_code == 200
 
 
-def test_version_is_off_in_production_without_a_token(monkeypatch):
+@pytest.mark.parametrize("environment", ["production", "kubernetes", "staging"])
+def test_version_is_off_in_a_deployed_environment_without_a_token(monkeypatch, environment):
     from app.main import app
 
     monkeypatch.delenv("VERSION_TOKEN", raising=False)
-    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("ENVIRONMENT", environment)
     assert TestClient(app).get("/version").status_code == 404
+
+
+def test_version_is_readable_in_kubernetes_with_the_token(monkeypatch):
+    from app.main import app
+
+    monkeypatch.setenv("ENVIRONMENT", "kubernetes")
+    monkeypatch.setenv("VERSION_TOKEN", "s3cret")
+    assert TestClient(app).get("/version", headers={"X-Version-Token": "s3cret"}).status_code == 200
+
+
+def test_the_kubernetes_backend_reads_the_token_as_an_optional_secret():
+    manifest = (ROOT / "k8s" / "backend.yaml").read_text(encoding="utf-8")
+    assert "name: VERSION_TOKEN" in manifest and "optional: true" in manifest
+    assert "VERSION_TOKEN" in (ROOT / "k8s" / "secret.example.yaml").read_text(encoding="utf-8")
+    assert "VERSION_TOKEN" in (ROOT / "scripts" / "k8s_secret.py").read_text(encoding="utf-8")
 
 
 # --- Langfuse traces carry the build ---
@@ -278,3 +294,32 @@ def test_mlflow_script_reports_when_mlflow_is_missing(monkeypatch, capsys, tmp_p
     result.write_text("{}", encoding="utf-8")
     assert log.main([str(result)]) == 1
     assert "mlflow is not installed" in capsys.readouterr().out
+
+
+def test_mlflow_logs_one_run_per_file(monkeypatch, tmp_path, capsys):
+    """The whole flow against a stand-in for mlflow: one run per file, with the build as parameters."""
+    import contextlib
+    import sys
+    import types
+
+    log = load_script("log_to_mlflow")
+    calls = {"runs": [], "params": [], "metrics": {}, "artifacts": []}
+    fake = types.SimpleNamespace(
+        set_experiment=lambda name: calls.update(experiment=name),
+        start_run=lambda run_name=None: calls["runs"].append(run_name) or contextlib.nullcontext(),
+        log_param=lambda key, value: calls["params"].append((key, value)),
+        log_params=lambda params: calls["params"].extend(params.items()),
+        log_metric=lambda key, value: calls["metrics"].__setitem__(key, value),
+        log_artifact=lambda path: calls["artifacts"].append(path),
+    )
+    monkeypatch.setitem(sys.modules, "mlflow", fake)
+    result = tmp_path / "deepeval-results.json"
+    result.write_text(
+        json.dumps({"summary": {"judge_model": "gpt-4.1", "grounding_rate": 0.9, "versions": V.build_info()}}),
+        encoding="utf-8",
+    )
+    assert log.main([str(result), "--experiment", "demo"]) == 0
+    assert calls["experiment"] == "demo" and calls["runs"] == ["deepeval-results"]
+    assert dict(calls["params"])["judge_model"] == "gpt-4.1"
+    assert calls["metrics"]["grounding_rate"] == 0.9
+    assert calls["artifacts"] == [str(result)]

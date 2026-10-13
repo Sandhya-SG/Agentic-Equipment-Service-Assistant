@@ -31,3 +31,6 @@ promptfoo-tests/*-results.json
 deepeval-tests/deepeval-results.json
 deepeval-tests/.deepeval/
 .deepeval/
+
+# MLflow runs
+mlruns/
