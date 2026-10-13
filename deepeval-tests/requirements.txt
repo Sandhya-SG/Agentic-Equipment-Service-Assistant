@@ -1,0 +1,5 @@
+# Installed into deepeval-tests/.venv (created with --system-site-packages so the project's own packages are visible).
+# DeepEval pulls many dependencies, so it is kept out of requirements.txt and out of the container images.
+deepeval==4.2.4
+python-dotenv>=1.0.0
+pytest>=7.4.0

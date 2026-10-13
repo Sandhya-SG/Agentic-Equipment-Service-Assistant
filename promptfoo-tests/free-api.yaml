@@ -1,0 +1,131 @@
+# yaml-language-server: $schema=https://promptfoo.dev/config-schema.json
+description: 'AEM API contract and prompt-injection tests (free tier: decided before any model answer, runs with a fake key)'
+
+# Input validation, the injection guard, the error contract and the health endpoints are all decided before a
+# model is called, so these run in CI against a backend started with a fake OPENAI_API_KEY.
+# BACKEND_URL defaults to http://localhost:8000. The benign false-positive checks only assert "not blocked",
+# so they pass with a fake key (status "unavailable") and with a real key (a real answer, slower).
+
+providers:
+  - id: file://provider.js
+    label: aem-chat
+
+prompts:
+  - 'AEM chat request'
+
+defaultTest:
+  options:
+    # The prompt is a fixed label; the request is built from the vars by provider.js.
+    disableVarExpansion: true
+
+tests:
+  # ---- Health and discovery -------------------------------------------------
+  - description: health endpoint is up
+    vars: { method: GET, path: /health }
+    assert:
+      - type: javascript
+        value: file://asserts.js:httpStatus
+        config: { status: 200 }
+
+  - description: equipment list offers both manuals
+    vars: { method: GET, path: /api/equipment }
+    assert:
+      - type: javascript
+        value: file://asserts.js:httpStatus
+        config: { status: 200 }
+      - type: contains
+        value: thermal_station
+      - type: contains
+        value: thermal_retrofit_1kw
+
+  # ---- Input validation: each must be rejected with 422 ----------------------
+  - description: empty message is rejected
+    vars: { message: '' }
+    assert:
+      - type: javascript
+        value: file://asserts.js:httpStatus
+        config: { status: 422 }
+
+  - description: whitespace-only message is rejected
+    vars: { message: '     ' }
+    assert:
+      - type: javascript
+        value: file://asserts.js:httpStatus
+        config: { status: 422 }
+
+  - description: missing message field is rejected
+    vars: { raw_body: '{"equipment_model":"thermal_station"}' }
+    assert:
+      - type: javascript
+        value: file://asserts.js:httpStatus
+        config: { status: 422 }
+
+  - description: message over the 2000 character limit is rejected
+    vars: { message_length: 2001 }
+    assert:
+      - type: javascript
+        value: file://asserts.js:httpStatus
+        config: { status: 422 }
+
+  - description: message at exactly 2000 characters is accepted by validation
+    vars: { message_length: 2000 }
+    assert:
+      - type: javascript
+        value: file://asserts.js:notBlocked
+
+  - description: unknown equipment model is rejected
+    vars: { message: 'How do I clean the filter?', equipment_model: nuclear_reactor }
+    assert:
+      - type: javascript
+        value: file://asserts.js:httpStatus
+        config: { status: 422 }
+
+  - description: malformed JSON body is rejected
+    vars: { raw_body: '{"message": ' }
+    assert:
+      - type: javascript
+        value: file://asserts.js:httpStatus
+        config: { status: 422 }
+
+  - description: conversation_id over 64 characters is rejected
+    vars:
+      raw_body: '{"message":"hello","conversation_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'
+    assert:
+      - type: javascript
+        value: file://asserts.js:httpStatus
+        config: { status: 422 }
+
+  - description: validation errors do not leak internals (no stack trace, file paths or library names)
+    vars: { message: '' }
+    assert:
+      - type: javascript
+        value: file://asserts.js:noInternalsLeaked
+
+  # ---- Feedback endpoint ------------------------------------------------------
+  - description: feedback with a malformed run_id is rejected
+    vars: { method: POST, path: /api/feedback, raw_body: '{"run_id":"not-a-run-id","helpful":true}' }
+    assert:
+      - type: javascript
+        value: file://asserts.js:httpStatus
+        config: { status: 422 }
+
+  - description: feedback without the helpful flag is rejected
+    vars: { method: POST, path: /api/feedback, raw_body: '{"run_id":"0123456789ab"}' }
+    assert:
+      - type: javascript
+        value: file://asserts.js:httpStatus
+        config: { status: 422 }
+
+  - description: feedback for an unknown run is a 404, not a server error
+    vars: { method: POST, path: /api/feedback, raw_body: '{"run_id":"ffffffffffff","helpful":true}' }
+    assert:
+      - type: javascript
+        value: file://asserts.js:httpStatus
+        config: { status: 404 }
+
+  # ---- Prompt injection: every catalogued attack must be blocked --------------
+  # One test per attack in eval/datasets/adversarial.jsonl (known misses excluded, see generators.js).
+  - file://generators.js:attackTests
+
+  # ---- False positives: ordinary equipment questions must not be blocked ------
+  - file://generators.js:benignTests

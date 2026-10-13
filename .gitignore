@@ -23,3 +23,11 @@ aem_documents/*
 
 corpus/aem/*
 !corpus/aem/.gitkeep
+# Promptfoo
+promptfoo-tests/node_modules/
+promptfoo-tests/*-out.json
+promptfoo-tests/out.json
+promptfoo-tests/*-results.json
+deepeval-tests/deepeval-results.json
+deepeval-tests/.deepeval/
+.deepeval/

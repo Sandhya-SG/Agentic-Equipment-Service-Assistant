@@ -1150,3 +1150,22 @@ def test_a_failing_explanation_layer_never_breaks_the_answer(graph, monkeypatch)
     assert body["response"] == graph["state"]["final_answer"]
     assert body["explanation"] is None
     assert run_end(body["run_id"])["explained"] is False
+
+
+def test_requests_without_conversation_id_do_not_share_clarification_state(graph):
+    """Regression: a fixed fallback id let one anonymous caller's clarification leak into the next caller's request."""
+    graph["state"] = {"request_status": "CLARIFY", "clarification_question": "Which filter do you mean?"}
+    first = client.post("/api/chat", json={"message": "How often should the filter be replaced?"})
+    second = client.post("/api/chat", json={"message": "it is broken"})
+
+    assert first.json()["status"] == second.json()["status"] == "clarification"
+    assert first.json()["conversation_id"] != second.json()["conversation_id"]
+    assert get_pending(first.json()["conversation_id"]).original_query == "How often should the filter be replaced?"
+    # The second caller's question was not merged with the first caller's pending one.
+    assert get_pending(second.json()["conversation_id"]).original_query == "it is broken"
+    assert graph["calls"][1].get("resolved_query") in (None, "")
+
+
+def test_conversation_id_is_kept_when_the_client_sends_one(graph):
+    body = ask("hello there", conversation_id="my-own-conversation").json()
+    assert body["conversation_id"] == "my-own-conversation"

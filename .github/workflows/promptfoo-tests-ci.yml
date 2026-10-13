@@ -1,0 +1,110 @@
+name: Promptfoo Tests
+
+# API contract and prompt-injection tests against a running backend (promptfoo-tests/free-api.yaml).
+# Modelled on llmapp09's promptfoo-tests-ci.yml. Free tier only: the backend starts with a fake key and no
+# manual index (the sponsor manuals are not in the repository), so every test is decided before a model is
+# called: input validation, the injection guard, the error contract and the health endpoints.
+# The live suites (live-api.yaml, perf.yaml) need the real key and the manuals, so they run locally.
+# The dependency versions are pinned (promptfoo in promptfoo-tests/package-lock.json), unlike "@latest".
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "promptfoo-tests/**"
+      - "eval/datasets/**"
+      - "app/**"
+      - "src/asa/guardrails/**"
+      - ".github/workflows/promptfoo-tests-ci.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "promptfoo-tests/**"
+      - "eval/datasets/**"
+      - "app/**"
+      - "src/asa/guardrails/**"
+      - ".github/workflows/promptfoo-tests-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYTHONPATH: .:src
+  PROMPTFOO_DISABLE_TELEMETRY: "1"
+  PROMPTFOO_DISABLE_UPDATE: "1"
+
+jobs:
+  promptfoo-free:
+    name: Promptfoo API and Security Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: promptfoo-tests/package-lock.json
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-backend.txt
+
+      - name: Install Promptfoo (pinned by the lock file)
+        working-directory: promptfoo-tests
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Start the backend with a fake key
+        env:
+          OPENAI_API_KEY: sk-fake-key-for-ci-no-model-is-called
+        run: |
+          nohup python -m uvicorn app.main:app --port 8000 > backend.log 2>&1 &
+          echo "Waiting for the backend..."
+          for i in $(seq 1 60); do
+            if curl -fs http://localhost:8000/health > /dev/null; then
+              echo "Backend is up."
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "Backend failed to start."
+          cat backend.log
+          exit 1
+
+      - name: Run the Promptfoo free suite
+        working-directory: promptfoo-tests
+        run: npx promptfoo eval -c free-api.yaml --no-cache --no-progress-bar --no-table -o free-results.json
+
+      - name: Report the known gaps (not gating)
+        if: always()
+        working-directory: promptfoo-tests
+        continue-on-error: true
+        run: |
+          npx promptfoo eval -c known-gaps.yaml --no-cache --no-progress-bar --no-table -o known-gaps-results.json || true
+          {
+            echo '### Promptfoo known gaps (not gating)'
+            echo 'These are documented weaknesses of the pattern guard. They are expected to fail today.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Show backend log on failure
+        if: failure()
+        run: cat backend.log
+
+      - name: Upload Promptfoo results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: promptfoo-results
+          path: |
+            promptfoo-tests/free-results.json
+            promptfoo-tests/known-gaps-results.json
