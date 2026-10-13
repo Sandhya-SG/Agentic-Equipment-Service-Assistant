@@ -46,7 +46,7 @@ echo "<repo>\.venv\Lib\site-packages" > deepeval-tests/.venv/Lib/site-packages/p
 ## Run (from the repository root)
 
 ```bash
-# real OPENAI_API_KEY in .env or the environment; the manuals must be in aem_documents/
+# real OPENAI_API_KEY in .env or the environment; the ChromaDB index must be built (scripts/ingest.py)
 PYTHONUTF8=1 DEEPEVAL_TELEMETRY_OPT_OUT=YES deepeval-tests/.venv/Scripts/python -m pytest deepeval-tests -v -rs
 ```
 
@@ -54,4 +54,4 @@ Results are written to `deepeval-tests/deepeval-results.json`: per question the 
 
 ## Cost and limits
 
-About 16 pipeline runs plus about 16 x 3 x 10 judge calls on `gpt-4.1`: a few dollars at most, and about 25 minutes. It is a real-key run, so keep it out of CI (CI also has no manuals). The faithfulness check compares the answer with the passages the agent retrieved, not with the whole manual: if retrieval misses the relevant page, a faithful answer to the wrong passages still scores well. The judge is a model, so a disputed verdict should be checked by a person; the judge's reason is saved with every low score for that purpose.
+About 16 pipeline runs plus about 16 x 3 x 10 judge calls on `gpt-4.1`: a few dollars at most, and about 25 minutes. It is a real-key run, so keep it out of CI (CI has no ChromaDB index or key). The faithfulness check compares the answer with the passages the agent retrieved, not with the whole manual: if retrieval misses the relevant page, a faithful answer to the wrong passages still scores well. The judge is a model, so a disputed verdict should be checked by a person; the judge's reason is saved with every low score for that purpose.

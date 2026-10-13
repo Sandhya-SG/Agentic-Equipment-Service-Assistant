@@ -2,13 +2,14 @@
 
 The tests run the real pipeline (request -> planning -> specialist) in the same process, not through HTTP,
 because DeepEval's faithfulness metric needs the retrieved passages as context and the API only returns their
-labels. Needs the real OPENAI_API_KEY (the agents and the judge model both use it) and the manuals in aem_documents.
+labels. Needs the real OPENAI_API_KEY (the agents and the judge model both use it) and the ChromaDB index built from the manuals (scripts/ingest.py).
 Run from the repository root with the venv created in deepeval-tests/README (see DEEPEVAL_INSTRUCTIONS.md).
 """
 
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -79,7 +80,15 @@ def pipeline():
 
     def run(case: dict) -> dict:
         if case["id"] not in _pipeline_cache:
-            _pipeline_cache[case["id"]] = run_graph(case["question"], case["equipment_model"])
+            # A dropped connection to the model provider is retried with a growing pause; a real failure is raised.
+            for pause in (15, 45, None):
+                try:
+                    _pipeline_cache[case["id"]] = run_graph(case["question"], case["equipment_model"])
+                    break
+                except Exception:  # noqa: BLE001
+                    if pause is None:
+                        raise
+                    time.sleep(pause)
         return _pipeline_cache[case["id"]]
 
     return run

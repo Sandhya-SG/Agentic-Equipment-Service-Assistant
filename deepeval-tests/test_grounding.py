@@ -20,6 +20,8 @@ insufficient), have no grounded answer to score. They are skipped and counted, b
 finding in itself (over-asking, retrieval misses), reported in the summary.
 """
 
+import json
+import os
 import statistics
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -33,14 +35,34 @@ from conftest import (
     RELEVANCY_TARGET,
     RELEVANCY_THRESHOLD,
     REPEATS,
+    RESULTS_FILE,
     load_gold_set,
 )
 from deepeval.metrics import AnswerRelevancyMetric, FaithfulnessMetric, GEval
 from deepeval.test_case import LLMTestCase, LLMTestCaseParams
 
 GOLD = load_gold_set()
-SCORES: dict = {"cases": {}, "skipped": {}, "errors": {}}
-JUDGE_ATTEMPTS = 3  # a transient judge error (timeout, rate limit) is retried before the question is called unscored
+SCORES: dict = {"cases": {}, "skipped": {}, "errors": {}, "judge_fallbacks": {}, "resumed": []}
+
+# A transient judge error (timeout, rate limit, dropped connection) is retried with a growing pause before the
+# question is called unscored.
+JUDGE_ATTEMPTS = 3
+RETRY_PAUSES = (15, 45, 90)  # seconds before the 2nd, 3rd ... attempt
+
+# If the main judge keeps failing on one question (it can loop on a long answer), the question is judged once by this
+# model instead. The substitution is recorded per question and in the summary, never hidden. Empty to disable.
+FALLBACK_JUDGE = os.getenv("DEEPEVAL_FALLBACK_JUDGE", "gpt-4o")
+
+# DEEPEVAL_RESUME=1 keeps the questions already scored in deepeval-results.json and only runs the missing ones, so an
+# interrupted run does not have to pay for the whole set again. Resumed questions are listed in the summary.
+RESUME = os.getenv("DEEPEVAL_RESUME") == "1"
+if RESUME and RESULTS_FILE.exists():
+    _previous = json.loads(RESULTS_FILE.read_text(encoding="utf-8"))
+    for _id, _case_result in _previous.get("cases", {}).items():
+        SCORES["cases"][_id] = _case_result
+        SCORES["resumed"].append(_id)
+        if _case_result.get("judge") and _case_result["judge"] != JUDGE_MODEL:
+            SCORES["judge_fallbacks"][_id] = _case_result["judge"]
 
 FAITHFULNESS = "FaithfulnessMetric"
 RELEVANCY = "AnswerRelevancyMetric"
@@ -72,11 +94,11 @@ def _gradable(item: dict, state: dict) -> LLMTestCase:
     return case
 
 
-def _metrics():
+def _metrics(model: str):
     """Fresh metric objects: a metric keeps state from its last measurement, so each repeat gets its own."""
     return [
-        FaithfulnessMetric(threshold=FAITHFULNESS_THRESHOLD, model=JUDGE_MODEL, include_reason=True),
-        AnswerRelevancyMetric(threshold=RELEVANCY_THRESHOLD, model=JUDGE_MODEL, include_reason=True),
+        FaithfulnessMetric(threshold=FAITHFULNESS_THRESHOLD, model=model, include_reason=True),
+        AnswerRelevancyMetric(threshold=RELEVANCY_THRESHOLD, model=model, include_reason=True),
         GEval(
             name=INVENTED,
             criteria=(
@@ -90,36 +112,37 @@ def _metrics():
                 LLMTestCaseParams.RETRIEVAL_CONTEXT,
             ],
             threshold=INVENTED_THRESHOLD,
-            model=JUDGE_MODEL,
+            model=model,
         ),
     ]
 
 
-def _measure_once(case: LLMTestCase) -> dict[str, tuple[float, str]]:
+def _measure_once(case: LLMTestCase, model: str) -> dict[str, tuple[float, str]]:
     """One full set of measurements: metric name -> (score, the judge's reason).
 
-    A judge error (timeout, rate limit) is retried. If it keeps failing the error is raised: an unscored question
+    A judge error is retried with a growing pause. If it keeps failing the error is raised: an unscored question
     must never be counted as scored, nor quietly dropped from the denominator.
     """
     last_error: Exception | None = None
     for attempt in range(JUDGE_ATTEMPTS):
         try:
             out = {}
-            for metric in _metrics():
+            for metric in _metrics(model):
                 metric.measure(case)
                 name = metric.name if isinstance(metric, GEval) else metric.__class__.__name__
                 out[name] = (float(metric.score), str(getattr(metric, "reason", "") or ""))
             return out
         except Exception as error:  # noqa: BLE001 - any judge failure is retried, then reported
             last_error = error
-            time.sleep(5 * (attempt + 1))
+            if attempt < JUDGE_ATTEMPTS - 1:
+                time.sleep(RETRY_PAUSES[min(attempt, len(RETRY_PAUSES) - 1)])
     raise RuntimeError(f"the judge failed {JUDGE_ATTEMPTS} times: {type(last_error).__name__}: {str(last_error)[:160]}")
 
 
-def measure(case: LLMTestCase) -> dict:
-    """Measure the case REPEATS times (concurrently) and summarise each metric by its median."""
-    with ThreadPoolExecutor(max_workers=REPEATS) as pool:
-        runs = list(pool.map(lambda _: _measure_once(case), range(REPEATS)))
+def _measure_with(case: LLMTestCase, model: str, repeats: int) -> dict:
+    """Measure the case `repeats` times (concurrently) with one judge and summarise each metric by its median."""
+    with ThreadPoolExecutor(max_workers=repeats) as pool:
+        runs = list(pool.map(lambda _: _measure_once(case, model), range(repeats)))
     summary = {}
     for name in THRESHOLDS:
         values = [run[name][0] for run in runs]
@@ -133,16 +156,36 @@ def measure(case: LLMTestCase) -> dict:
     return summary
 
 
+def measure(case: LLMTestCase) -> tuple[dict, str]:
+    """Measure with the main judge; if it keeps failing, once with the fallback judge. Returns (summary, judge used)."""
+    try:
+        return _measure_with(case, JUDGE_MODEL, REPEATS), JUDGE_MODEL
+    except RuntimeError as main_error:
+        if not FALLBACK_JUDGE or FALLBACK_JUDGE == JUDGE_MODEL:
+            raise
+        try:
+            return _measure_with(case, FALLBACK_JUDGE, 1), FALLBACK_JUDGE
+        except RuntimeError as fallback_error:
+            raise RuntimeError(f"{main_error}; fallback {FALLBACK_JUDGE}: {fallback_error}") from fallback_error
+
+
 @pytest.mark.parametrize("item", GOLD, ids=[g["id"] for g in GOLD])
 def test_answer_is_grounded(item, pipeline):
     """The answer agrees with the manual: median faithfulness and median no-invented-specifics both pass."""
+    if item["id"] in SCORES["resumed"]:
+        # Already scored in an earlier session (DEEPEVAL_RESUME=1): keep it, and still fail if it was not grounded.
+        assert SCORES["cases"][item["id"]]["grounded"], "; ".join(SCORES["cases"][item["id"]]["failures"])
+        return
+
     state = pipeline(item)
     case = _gradable(item, state)
     try:
-        summary = measure(case)
+        summary, judge = measure(case)
     except RuntimeError as error:
         SCORES["errors"][item["id"]] = str(error)
         pytest.fail(f"{item['id']} could not be scored: {error}")
+    if judge != JUDGE_MODEL:
+        SCORES["judge_fallbacks"][item["id"]] = judge
 
     scores = {name: summary[name]["median"] for name in summary}
     grounded = scores[FAITHFULNESS] >= FAITHFULNESS_THRESHOLD and scores[INVENTED] >= INVENTED_THRESHOLD
@@ -155,6 +198,8 @@ def test_answer_is_grounded(item, pipeline):
     ]
     SCORES["cases"][item["id"]] = {
         "question": item["question"],
+        "judge": judge,
+        "repeats": REPEATS if judge == JUDGE_MODEL else 1,
         "scores": scores,
         "runs": {name: summary[name]["runs"] for name in summary},
         "spread": {name: summary[name]["spread"] for name in summary},
@@ -173,6 +218,8 @@ def _summary() -> dict:
     return {
         "judge_model": JUDGE_MODEL,
         "repeats": REPEATS,
+        "judge_fallbacks": dict(SCORES["judge_fallbacks"]),  # question -> the other judge used for it
+        "resumed": list(SCORES["resumed"]),  # questions kept from an earlier session of the same run
         "gradable": n,
         "judge_errors": len(SCORES["errors"]),
         "skipped": len(SCORES["skipped"]),

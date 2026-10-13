@@ -8,7 +8,7 @@ Black-box tests against a running backend (`POST /api/chat` and friends). They c
 |---|---|---|---|
 | `free-api.yaml` | Input validation (422), error contract, health, **every catalogued prompt-injection attack is blocked**, every ordinary question (including the tricky phrasings) is not blocked | No (fake key is fine) | Every PR (`.github/workflows/promptfoo-tests-ci.yml`), gating |
 | `known-gaps.yaml` | The 6 obfuscations a pattern guard cannot decode (ROT13, reversed text, hex, typos, split words, Tamil) | No | CI, **reported only, expected to fail** |
-| `live-api.yaml` | Request decision and over-asking, routing, retrieval and equipment isolation, citations, explanation, grounding, safety on the seeded unsafe cases, injection resistance past the guard, disclosure | Real `OPENAI_API_KEY` | Locally, on demand (CI has no manuals) |
+| `live-api.yaml` | Request decision and over-asking, routing, retrieval and equipment isolation, citations, explanation, grounding, safety on the seeded unsafe cases, injection resistance past the guard, disclosure | Real `OPENAI_API_KEY` | Locally, on demand (CI has no ChromaDB index or key) |
 | `perf.yaml` | End-to-end latency per request type against the PRD target of about 10 s | Real key | Locally, on demand |
 
 The datasets are shared with the offline evaluation (`eval/datasets/adversarial.jsonl`, `eval/datasets/safety_cases.jsonl`), so the API tests and `python eval/run_eval.py` always use the same attacks.
