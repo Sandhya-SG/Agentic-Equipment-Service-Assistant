@@ -4,8 +4,8 @@
     python eval/run_eval.py --enforce             # exit 1 if any target is missed (a CI gate)
     python eval/run_eval.py --out report.json     # also write every number and failure to a file
 
-Suites: the prompt-injection guard (`injection_eval.py`), the deterministic safety rules (`safety_eval.py`) and the
-response firewall (`output_eval.py`).
+Suites: the prompt-injection guard (`injection_eval.py`), the deterministic safety rules (`safety_eval.py`) the
+response firewall (`output_eval.py`) and the explainability layer (`explanation_eval.py`, offline part).
 Targets live in `eval/thresholds.json`. The suites that call OpenAI (clarification, grounding) are separate and
 opt-in; see `eval/clarification_eval.py`.
 """
@@ -26,6 +26,7 @@ THRESHOLDS = EVAL_DIR / "thresholds.json"
 
 
 def run_offline() -> dict:
+    import explanation_eval
     import injection_eval
     import output_eval
     import safety_eval
@@ -34,6 +35,7 @@ def run_offline() -> dict:
         "injection": injection_eval.evaluate(injection_eval.load_cases()),
         "safety_rules": safety_eval.evaluate(safety_eval.load_cases()),
         "output_guard": output_eval.evaluate(output_eval.load_cases()),
+        "explanation": explanation_eval.evaluate(explanation_eval.load_cases()),
     }
 
 
@@ -78,6 +80,17 @@ def print_report(report: dict, rows: list[dict]) -> None:
         print(f"  safe text halted: {item['text']!r}")
     for item in safety["open_gaps"]:
         print(f"  known gap: {item['text']!r} ({item['note']})")
+
+    explanation = report["explanation"]
+    print(
+        f"\nexplainability: {explanation['cases_total']} cases; {explanation['known_gaps_open']} of "
+        f"{explanation['known_gaps_total']} near-miss claims are wrongly verified "
+        f"(false verification rate {explanation['false_verification_rate']})"
+    )
+    for item in explanation["failures"]:
+        print(f"  explanation case failed ({item['id']}): {item['problems']}")
+    for gap in explanation["open_gaps"]:
+        print(f"  known gap ({gap['id']}): {gap['note']}")
 
     output = report["output_guard"]
     print(
