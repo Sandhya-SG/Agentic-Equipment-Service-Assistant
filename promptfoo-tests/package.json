@@ -1,0 +1,16 @@
+{
+  "name": "aem-promptfoo-tests",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Promptfoo API and security tests for the AEM assistant (POST /api/chat)",
+  "scripts": {
+    "eval:free": "promptfoo eval -c free-api.yaml",
+    "eval:live": "promptfoo eval -c live-api.yaml",
+    "eval:perf": "promptfoo eval -c perf.yaml",
+    "eval:gaps": "promptfoo eval -c known-gaps.yaml",
+    "view": "promptfoo view"
+  },
+  "devDependencies": {
+    "promptfoo": "0.123.0"
+  }
+}

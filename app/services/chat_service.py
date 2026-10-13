@@ -16,24 +16,23 @@ import hashlib
 import logging
 import time
 
+from app.schemas.response import ChatResponse, SafetyInfo, TraceStep
 from app.services.clarification_store import (
     PendingClarification,
     clear_pending,
     get_pending,
     set_pending,
 )
+from app.services.graph_runner import run_graph
 from asa.agents.clarification import (
     resolve_clarification,
 )
-
-from asa.graph.state import CONFIDENCE_FLOOR, MAX_CLARIFICATIONS, Citation
-
-from app.schemas.response import ChatResponse, SafetyInfo, TraceStep
-from app.services.graph_runner import run_graph
 from asa.components import logging_sub
 from asa.components.tracing import observation, record_outcome, tag_run, trace_request
+from asa.graph.state import CONFIDENCE_FLOOR, MAX_CLARIFICATIONS, Citation
 from asa.guardrails.injection import scan_user_input
 from asa.guardrails.safety_rules import check_defeat_request, check_text
+from asa.guardrails.schema_guard import guard_output
 
 logger = logging.getLogger(__name__)
 
@@ -269,6 +268,7 @@ def _halt_defeat_request(
         "hazard_categories": ["safety_control_defeat"],
         "escalation_reason": None,
         "explained": False,
+        "output_guard": {"action": "none", "findings": []},
         "answer_sha256": hashlib.sha256(answer.encode("utf-8")).hexdigest(),
         "trace_summary": [],
     }
@@ -314,27 +314,17 @@ def _handle_chat(message: str, conversation_id: str, equipment_model: str | None
     if defeated_control:
         return _halt_defeat_request(defeated_control, safe_message, conversation_id, equipment_model, started)
 
-    pending = get_pending(
-        conversation_id
-    )
+    pending = get_pending(conversation_id)
 
     clarification_response = None
     resolved_query = None
     clarification_count = 0
 
     if pending is not None:
-
         # Equipment identity must remain stable across the
         # clarification exchange.
-        if (
-            pending.equipment_model
-            and equipment_model
-            and pending.equipment_model
-            != equipment_model
-        ):
-            clear_pending(
-                conversation_id
-            )
+        if pending.equipment_model and equipment_model and pending.equipment_model != equipment_model:
+            clear_pending(conversation_id)
 
             pending = None
 
@@ -345,21 +335,13 @@ def _handle_chat(message: str, conversation_id: str, equipment_model: str | None
             pending = None
 
         else:
-            clarification_response = (
-                safe_message
-            )
+            clarification_response = safe_message
 
-            clarification_count = (
-                pending.clarification_count
-                + 1
-            )
+            clarification_count = pending.clarification_count + 1
 
             resolved_query = resolve_clarification(
-                original_query=
-                    pending.original_query,
-
-                clarification_response=
-                    clarification_response,
+                original_query=pending.original_query,
+                clarification_response=clarification_response,
             )
 
     run_id = logging_sub.start_run(safe_message)
@@ -369,33 +351,24 @@ def _handle_chat(message: str, conversation_id: str, equipment_model: str | None
             state = run_graph(
                 safe_message,
                 equipment_model,
-                clarification_response=
-                    clarification_response,
-                resolved_query=
-                    resolved_query,
-                clarification_count=
-                    clarification_count,
+                clarification_response=clarification_response,
+                resolved_query=resolved_query,
+                clarification_count=clarification_count,
             )
     except Exception as exc:
         # OpenAI error, missing index, bad key... Never leak details to the user.
         logger.error("chat failed: run_id=%s error=%s: %s", run_id, type(exc).__name__, exc)
         return _unavailable(run_id, conversation_id, equipment_model, started, type(exc).__name__)
 
-
     status = _agent_status(state)
 
-    if (
-        status == "clarification"
-        and clarification_count
-        >= MAX_CLARIFICATIONS
-    ):
+    if status == "clarification" and clarification_count >= MAX_CLARIFICATIONS:
         status = "escalated"
 
         state["escalated"] = True
 
         state["escalation_reason"] = (
-            "The request remained ambiguous after "
-            "the maximum number of clarification attempts."
+            "The request remained ambiguous after the maximum number of clarification attempts."
         )
 
         state["final_answer"] = (
@@ -405,37 +378,23 @@ def _handle_chat(message: str, conversation_id: str, equipment_model: str | None
             "engineer for further clarification."
         )
 
-        clear_pending(
-            conversation_id
-        )
+        clear_pending(conversation_id)
 
     elif status == "clarification":
-
-        original_query = (
-            pending.original_query
-            if pending is not None
-            else safe_message
-        )
+        original_query = pending.original_query if pending is not None else safe_message
 
         set_pending(
             conversation_id,
             PendingClarification(
                 original_query=original_query,
-                clarification_question=(
-                    state.get("clarification_question")
-                    or ""
-                ),
+                clarification_question=(state.get("clarification_question") or ""),
                 equipment_model=equipment_model,
                 clarification_count=clarification_count,
             ),
         )
 
     else:
-
-        clear_pending(
-            conversation_id
-        )
-
+        clear_pending(conversation_id)
 
     answer = state.get("final_answer") or state.get("clarification_question") or ""
     if not answer:
@@ -471,6 +430,23 @@ def _handle_chat(message: str, conversation_id: str, equipment_model: str | None
     elif hazards:
         safety = _hazard_safety(hazards, ppe)
 
+    # Response firewall: the last check on what leaves the system. Secrets, personal data that is not in the
+    # manual, executable markup and over-long text are cleaned; a leaked prompt or internal structure is withheld
+    # and the request goes to a human. Findings are categories only, never the text itself.
+    with observation("check-response", as_type="guardrail") as guard:
+        output = guard_output(answer, [chunk.text for chunk in state.get("retrieved_chunks") or []])
+        guard.update(output={"action": output.action, "findings": list(output.findings)})
+    if output.action != "none":
+        logger.warning(
+            "chat answer %s by the response firewall: findings=%s run_id=%s",
+            output.action,
+            list(output.findings),
+            run_id,
+        )
+        answer = output.text
+    if output.action == "withheld" and status in ("ok", "clarification"):
+        status = "escalated"
+
     if status in ("halted", "escalated"):
         safety.requires_human_review = True
 
@@ -487,6 +463,8 @@ def _handle_chat(message: str, conversation_id: str, equipment_model: str | None
 
     latency_s = time.monotonic() - started
     escalation_reason = state.get("escalation_reason") or None
+    if output.action == "withheld":
+        escalation_reason = escalation_reason or "The answer was withheld by the response firewall."
     audit = {
         "final_answer": answer,
         "escalated": status == "escalated",
@@ -503,6 +481,7 @@ def _handle_chat(message: str, conversation_id: str, equipment_model: str | None
         "ppe_required": safety.ppe_required,
         "requires_human_review": safety.requires_human_review,
         "escalation_reason": escalation_reason,
+        "output_guard": {"action": output.action, "findings": list(output.findings)},
         "answer_sha256": hashlib.sha256(answer.encode("utf-8")).hexdigest(),
         "trace_summary": [step.agent for step in trace],
     }

@@ -1,4 +1,5 @@
 import logging
+import uuid
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Query
@@ -64,7 +65,11 @@ async def equipment():
 # Plain `def` so FastAPI runs it in a threadpool: the agent run blocks.
 @app.post("/api/chat", response_model=ChatResponse)
 def chat(request: ChatRequest):
-    result = handle_chat(request.message, request.conversation_id or "demo-session", request.equipment_model)
+    # Without a conversation_id every request gets its own, so a pending clarification is never shared between
+    # callers. (A fixed fallback id made unrelated API clients continue each other's clarification.) A client that
+    # wants a multi-turn conversation sends the conversation_id returned in the first response.
+    conversation_id = request.conversation_id or f"anon-{uuid.uuid4().hex[:12]}"
+    result = handle_chat(request.message, conversation_id, request.equipment_model)
     status_code = {"blocked": 400, "unavailable": 503}.get(result.status, 200)
     if status_code == 200:
         return result

@@ -210,6 +210,49 @@ jobs:
           docker push "$IMAGE:sha-${GITHUB_SHA::7}"
           docker push "$IMAGE:latest"
 
+  # ---------------------------------------------------------------------
+  # 6. Offline evaluation — injection guard and safety rules against the
+  #    datasets in eval/. No model call, no key, no cost.
+  #    Report only for now: the numbers are published as a build artefact and
+  #    in the job summary. The quality pins in tests/unit/test_eval_offline.py
+  #    (run by the unit-tests job) already fail the build if the guard or the
+  #    rules get weaker. To make every target blocking, add --enforce below.
+  # ---------------------------------------------------------------------
+  offline-evals:
+    name: Offline Evaluation
+    runs-on: ubuntu-latest
+    needs: [lint]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run the offline evaluation
+        run: |
+          python eval/run_eval.py --out eval-report.json | tee eval-summary.txt
+          {
+            echo '### Offline evaluation'
+            echo '```'
+            cat eval-summary.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the evaluation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: offline-eval-report
+          path: eval-report.json
+
   # =======================================================================
   # COMING LATER — placeholder jobs, intentionally not active yet.
   # These are blocked on the orchestrator/graph and the Request, Planning,

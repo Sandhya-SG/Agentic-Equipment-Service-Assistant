@@ -1,0 +1,23 @@
+# yaml-language-server: $schema=https://promptfoo.dev/config-schema.json
+description: 'AEM known gaps in the input guard (reported, NOT gating): expect failures until the guard improves'
+
+# These cases are documented weaknesses of the pattern-based injection guard (see eval/injection_eval.py and
+# docs/responsible-ai-status.md): obfuscations that need decoding the guard does not do (ROT13, reversed text, hex,
+# typos, split words, scripts without a pattern). They fail today on purpose. The tricky legitimate questions that
+# used to be listed here are fixed and now gate in free-api.yaml. Run this to see the current state and to confirm a
+# guard improvement worked; do not use it as a CI gate. Any case that starts passing can move to free-api.yaml.
+
+providers:
+  - id: file://provider.js
+    label: aem-chat
+
+prompts:
+  - 'AEM chat request'
+
+defaultTest:
+  options:
+    disableVarExpansion: true
+
+tests:
+  # Attacks that slip past the pattern guard (false negatives)
+  - file://generators.js:knownMissAttackTests

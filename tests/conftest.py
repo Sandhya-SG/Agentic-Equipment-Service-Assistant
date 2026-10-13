@@ -14,6 +14,18 @@ def pytest_addoption(parser):
     )
 
 
+def pytest_configure(config):
+    """Let the agent modules be imported with no credentials (as in CI).
+
+    Several agents create their OpenAI client when the module is imported, which fails without a key. Every model call
+    in these tests is a fake, so a placeholder key is enough. It is only set when there is no real key, and never when
+    the live tests were requested (--run-openai or RUN_OPENAI_TESTS=1), which need the real one.
+    """
+    live = config.getoption("--run-openai") or os.getenv("RUN_OPENAI_TESTS") == "1"
+    if not live and not os.getenv("OPENAI_API_KEY"):
+        os.environ["OPENAI_API_KEY"] = "sk-placeholder-not-used-by-the-tests"
+
+
 def pytest_collection_modifyitems(config, items):
     """Skip tests marked `openai` unless the user opted in with --run-openai or RUN_OPENAI_TESTS=1."""
     if config.getoption("--run-openai") or os.getenv("RUN_OPENAI_TESTS") == "1":
