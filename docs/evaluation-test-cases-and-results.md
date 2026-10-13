@@ -29,7 +29,7 @@ Run date: 2026-10-13 · Branch `feature/evals-full` after merging `origin/main` 
 | 7 | Promptfoo performance (`perf.yaml`) | 7 | 7 | 0 | Target 10 s per request, all met |
 | 8 | DeepEval grounding | 16 | 14 | 2 | 0 skipped; grounding rate 88% vs 90% target |
 | 9 | Offline evaluation (guard and safety rules) | 7 targets | 6 | 1 | One target (false-positive rate) missed by design |
-| 10 | pytest unit, API and security tests | 588 | 586 | 0 | 2 skipped (live OpenAI tests, opt-in) |
+| 10 | pytest unit, API and security tests | 636 | 634 | 0 | 2 skipped (live OpenAI tests, opt-in) |
 
 ### 1.3 Environment and versions
 
@@ -399,7 +399,7 @@ The false-positive target is stricter than today's result on purpose: it records
 
 ## 10. pytest unit, API and security tests
 
-Run with `pytest tests` (fake model, no key, no network). **Result: 588 tests, 586 passed, 0 failed, 2 skipped** (live OpenAI tests, opt-in with `--run-openai`). The description is the test's docstring where it has one, otherwise its name.
+Run with `pytest tests` (fake model, no key, no network). **Result: 636 tests, 634 passed, 0 failed, 2 skipped** (live OpenAI tests, opt-in with `--run-openai`). The description is the test's docstring where it has one, otherwise its name.
 
 ### integration/test_graph_flow.py (33 tests)
 
@@ -627,7 +627,7 @@ Run with `pytest tests` (fake model, no key, no network). **Result: 588 tests, 5
 | UT-chunk-16 | `test_a_page_without_a_heading_continues_the_previous_section` | a page without a heading continues the previous section | PASS |
 | UT-chunk-17 | `test_the_table_of_contents_is_not_carried_forward` | the table of contents is not carried forward | PASS |
 
-### unit/test_diagnostic.py (31 tests)
+### unit/test_diagnostic.py (62 tests)
 
 | ID | Test | Description | Result |
 |---|---|---|---|
@@ -658,10 +658,41 @@ Run with `pytest tests` (fake model, no key, no network). **Result: 588 tests, 5
 | UT-diagnostic-25 | `test_escalation_uses_default_reason_when_rag_gives_none` | A missing or empty senior_reason must fall back to the default insufficiency reason. | PASS |
 | UT-diagnostic-26 | `test_missing_query_raises_before_any_retrieval` | An empty query must be rejected without touching retrieval or the model. | PASS |
 | UT-diagnostic-27 | `test_missing_equipment_model_raises_before_any_retrieval` | A missing equipment model must be rejected so retrieval is never unscoped. | PASS |
-| UT-diagnostic-28 | `test_malformed_json_never_yields_an_ungrounded_diagnosis` | Malformed model JSON must not produce causes or steps (currently it raises). | PASS |
-| UT-diagnostic-29 | `test_step_has_no_executable_or_actuator_field` | Steps are advice only: the type has no command field and extra model keys are ignored. | PASS |
-| UT-diagnostic-30 | `test_hazard_flag_is_passed_through_not_inferred_by_the_node` | Hazard classification belongs to the Safety agent: the node only relays the model flag. | PASS |
-| UT-diagnostic-31 | `test_format_context_includes_ids_and_provenance_for_every_chunk` | The model prompt must expose chunk ids and provenance so it can cite them. | PASS |
+| UT-diagnostic-28 | `test_an_unreadable_diagnosis_escalates_instead_of_failing_the_request[{not json]` | A malformed or non-object model reply must end in an escalation with no causes and no steps. | PASS |
+| UT-diagnostic-29 | `test_an_unreadable_diagnosis_escalates_instead_of_failing_the_request[]` | A malformed or non-object model reply must end in an escalation with no causes and no steps. | PASS |
+| UT-diagnostic-30 | `test_an_unreadable_diagnosis_escalates_instead_of_failing_the_request[ ]` | A malformed or non-object model reply must end in an escalation with no causes and no steps. | PASS |
+| UT-diagnostic-31 | `test_an_unreadable_diagnosis_escalates_instead_of_failing_the_request[[]]` | A malformed or non-object model reply must end in an escalation with no causes and no steps. | PASS |
+| UT-diagnostic-32 | `test_an_unreadable_diagnosis_escalates_instead_of_failing_the_request[null]` | A malformed or non-object model reply must end in an escalation with no causes and no steps. | PASS |
+| UT-diagnostic-33 | `test_an_unreadable_diagnosis_escalates_instead_of_failing_the_request[42]` | A malformed or non-object model reply must end in an escalation with no causes and no steps. | PASS |
+| UT-diagnostic-34 | `test_an_unreadable_diagnosis_escalates_instead_of_failing_the_request["a string"]` | A malformed or non-object model reply must end in an escalation with no causes and no steps. | PASS |
+| UT-diagnostic-35 | `test_an_unreadable_diagnosis_escalates_instead_of_failing_the_request[[{"cause": "x"}]]` | A malformed or non-object model reply must end in an escalation with no causes and no steps. | PASS |
+| UT-diagnostic-36 | `test_an_unreadable_diagnosis_escalates_instead_of_failing_the_request[Sure! Here is the diagnosis.]` | A malformed or non-object model reply must end in an escalation with no causes and no steps. | PASS |
+| UT-diagnostic-37 | `test_an_unreadable_diagnosis_keeps_the_retrieved_evidence_and_counts` | The escalation still carries the evidence and the retry count so the reviewer sees what was found. | PASS |
+| UT-diagnostic-38 | `test_a_generation_reply_with_no_content_escalates` | A refusal or content-filter stop (content None) must escalate, not crash with AttributeError. | PASS |
+| UT-diagnostic-39 | `test_a_generation_response_with_no_choices_escalates` | A response object without choices is treated like an unreadable reply. | PASS |
+| UT-diagnostic-40 | `test_an_unusable_likelihood_becomes_zero_and_does_not_crash[high]` | A bad likelihood costs only that number: the cause is kept with 0.0. | PASS |
+| UT-diagnostic-41 | `test_an_unusable_likelihood_becomes_zero_and_does_not_crash[None]` | A bad likelihood costs only that number: the cause is kept with 0.0. | PASS |
+| UT-diagnostic-42 | `test_an_unusable_likelihood_becomes_zero_and_does_not_crash[likelihood2]` | A bad likelihood costs only that number: the cause is kept with 0.0. | PASS |
+| UT-diagnostic-43 | `test_an_unusable_likelihood_becomes_zero_and_does_not_crash[likelihood3]` | A bad likelihood costs only that number: the cause is kept with 0.0. | PASS |
+| UT-diagnostic-44 | `test_an_unusable_likelihood_becomes_zero_and_does_not_crash[n/a]` | A bad likelihood costs only that number: the cause is kept with 0.0. | PASS |
+| UT-diagnostic-45 | `test_an_unusable_likelihood_becomes_zero_and_does_not_crash[nan]` | A bad likelihood costs only that number: the cause is kept with 0.0. | PASS |
+| UT-diagnostic-46 | `test_a_numeric_string_likelihood_is_still_read` | '0.6' is a usable number; only unusable values fall back to 0.0. | PASS |
+| UT-diagnostic-47 | `test_a_validator_reply_with_no_content_drops_the_claim` | If the validator returns no content the claim is not SUPPORTED, so it is removed (fail closed). | PASS |
+| UT-diagnostic-48 | `test_a_citation_given_as_a_single_string_is_one_chunk_id` | 'c1' as a string means chunk c1, not the characters 'c' and '1'. | PASS |
+| UT-diagnostic-49 | `test_unusable_citations_leave_the_claim_without_evidence_so_it_is_dropped[None]` | A claim with no readable citation has no evidence: it is removed without calling the validator. | PASS |
+| UT-diagnostic-50 | `test_unusable_citations_leave_the_claim_without_evidence_so_it_is_dropped[5]` | A claim with no readable citation has no evidence: it is removed without calling the validator. | PASS |
+| UT-diagnostic-51 | `test_unusable_citations_leave_the_claim_without_evidence_so_it_is_dropped[citations2]` | A claim with no readable citation has no evidence: it is removed without calling the validator. | PASS |
+| UT-diagnostic-52 | `test_unusable_citations_leave_the_claim_without_evidence_so_it_is_dropped[citations3]` | A claim with no readable citation has no evidence: it is removed without calling the validator. | PASS |
+| UT-diagnostic-53 | `test_unusable_citations_leave_the_claim_without_evidence_so_it_is_dropped[citations4]` | A claim with no readable citation has no evidence: it is removed without calling the validator. | PASS |
+| UT-diagnostic-54 | `test_unusable_citations_leave_the_claim_without_evidence_so_it_is_dropped[citations5]` | A claim with no readable citation has no evidence: it is removed without calling the validator. | PASS |
+| UT-diagnostic-55 | `test_causes_and_checks_with_empty_text_are_skipped_before_validation` | An empty cause or check is not a claim: it costs no validator call and leaves no empty bullet. | PASS |
+| UT-diagnostic-56 | `test_wrongly_typed_lists_yield_an_empty_but_valid_diagnosis[diagnosis0]` | Lists of the wrong type or entries that are not objects are ignored, never raised on. | PASS |
+| UT-diagnostic-57 | `test_wrongly_typed_lists_yield_an_empty_but_valid_diagnosis[diagnosis1]` | Lists of the wrong type or entries that are not objects are ignored, never raised on. | PASS |
+| UT-diagnostic-58 | `test_wrongly_typed_lists_yield_an_empty_but_valid_diagnosis[diagnosis2]` | Lists of the wrong type or entries that are not objects are ignored, never raised on. | PASS |
+| UT-diagnostic-59 | `test_wrongly_typed_lists_yield_an_empty_but_valid_diagnosis[diagnosis3]` | Lists of the wrong type or entries that are not objects are ignored, never raised on. | PASS |
+| UT-diagnostic-60 | `test_step_has_no_executable_or_actuator_field` | Steps are advice only: the type has no command field and extra model keys are ignored. | PASS |
+| UT-diagnostic-61 | `test_hazard_flag_is_passed_through_not_inferred_by_the_node` | Hazard classification belongs to the Safety agent: the node only relays the model flag. | PASS |
+| UT-diagnostic-62 | `test_format_context_includes_ids_and_provenance_for_every_chunk` | The model prompt must expose chunk ids and provenance so it can cite them. | PASS |
 
 ### unit/test_eval_offline.py (13 tests)
 
@@ -783,7 +814,7 @@ Run with `pytest tests` (fake model, no key, no network). **Result: 588 tests, 5
 | UT-logging-27 | `test_alerts_fire_for_error_spikes_and_blocked_anomalies` | alerts fire for error spikes and blocked anomalies | PASS |
 | UT-logging-28 | `test_alert_thresholds_can_be_overridden_by_environment_and_by_argument` | alert thresholds can be overridden by environment and by argument | PASS |
 
-### unit/test_rag.py (43 tests)
+### unit/test_rag.py (60 tests)
 
 | ID | Test | Description | Result |
 |---|---|---|---|
@@ -795,41 +826,58 @@ Run with `pytest tests` (fake model, no key, no network). **Result: 588 tests, 5
 | UT-rag-06 | `test_junior_search_forces_tool_choice_and_uses_model_query` | The junior model must call the search tool (tool_choice forced) and its query is what is searched. | PASS |
 | UT-rag-07 | `test_junior_search_overrides_equipment_and_k_chosen_by_model` | The model cannot switch equipment or inflate k: the application's values always win. | PASS |
 | UT-rag-08 | `test_junior_search_requires_equipment_model` | An empty equipment model is refused before any model call is made. | PASS |
-| UT-rag-09 | `test_junior_search_raises_when_model_does_not_call_the_tool` | A model reply without a tool call fails loudly rather than answering from nothing. | PASS |
-| UT-rag-10 | `test_junior_search_malformed_tool_arguments_raise_and_never_search` | Non-JSON tool arguments raise a JSON error and no retrieval happens. | PASS |
-| UT-rag-11 | `test_junior_search_rejects_tool_call_without_query` | A tool call whose arguments omit the query is rejected instead of searching an empty string. | PASS |
-| UT-rag-12 | `test_assess_retrieval_only_accepts_the_single_word_good[GOOD-True]` | Assessment is True only for exactly GOOD (case/whitespace-insensitive); anything else is POOR. | PASS |
-| UT-rag-13 | `test_assess_retrieval_only_accepts_the_single_word_good[ good\n-True]` | Assessment is True only for exactly GOOD (case/whitespace-insensitive); anything else is POOR. | PASS |
-| UT-rag-14 | `test_assess_retrieval_only_accepts_the_single_word_good[POOR-False]` | Assessment is True only for exactly GOOD (case/whitespace-insensitive); anything else is POOR. | PASS |
-| UT-rag-15 | `test_assess_retrieval_only_accepts_the_single_word_good[GOOD enough, I suppose-False]` | Assessment is True only for exactly GOOD (case/whitespace-insensitive); anything else is POOR. | PASS |
-| UT-rag-16 | `test_assess_retrieval_only_accepts_the_single_word_good[-False]` | Assessment is True only for exactly GOOD (case/whitespace-insensitive); anything else is POOR. | PASS |
-| UT-rag-17 | `test_assess_retrieval_with_no_results_is_poor_without_calling_the_model` | Empty retrieval is POOR immediately and costs no model call. | PASS |
-| UT-rag-18 | `test_assess_retrieval_prompt_carries_question_equipment_and_evidence` | The assessor sees the engineer question, the selected equipment and the evidence text. | PASS |
-| UT-rag-19 | `test_reformulate_query_returns_stripped_query_and_keeps_equipment_in_prompt` | Reformulation returns the trimmed new query and the prompt pins the selected equipment. | PASS |
-| UT-rag-20 | `test_senior_review_parses_retry_with_new_query` | A well-formed RETRY reply yields decision, reason and the new query. | PASS |
-| UT-rag-21 | `test_senior_review_parses_escalate_and_ignores_none_query` | ESCALATE with QUERY: NONE gives no query. | PASS |
-| UT-rag-22 | `test_senior_review_retry_without_usable_query_is_downgraded_to_escalate` | RETRY with QUERY: NONE is unsafe, so it becomes ESCALATE with an explanatory reason. | PASS |
-| UT-rag-23 | `test_senior_review_malformed_output_defaults_to_escalate[]` | Unparseable or invalid senior output fails safe to ESCALATE. | PASS |
-| UT-rag-24 | `test_senior_review_malformed_output_defaults_to_escalate[I would retry this one.]` | Unparseable or invalid senior output fails safe to ESCALATE. | PASS |
-| UT-rag-25 | `test_senior_review_malformed_output_defaults_to_escalate[DECISION: MAYBE\nQUERY: foo]` | Unparseable or invalid senior output fails safe to ESCALATE. | PASS |
-| UT-rag-26 | `test_senior_review_decision_is_case_insensitive` | A lower-case decision word is still understood. | PASS |
-| UT-rag-27 | `test_loop_good_first_attempt_stops_after_one_retrieval` | GOOD evidence on the first search ends the loop: 1 attempt, no reformulation, no senior. | PASS |
-| UT-rag-28 | `test_loop_reformulates_after_poor_and_succeeds_on_second_attempt` | POOR then reformulated query then GOOD gives 2 attempts with the new query, senior unused. | PASS |
-| UT-rag-29 | `test_loop_senior_retry_gives_third_good_retrieval` | Two POOR attempts then senior RETRY then GOOD gives 3 attempts, senior_decision RETRY. | PASS |
-| UT-rag-30 | `test_loop_never_exceeds_three_retrievals_and_escalates_when_third_is_poor` | Even if every assessment is POOR, there are exactly three searches (2 junior + 1 senior) then escalation. | PASS |
-| UT-rag-31 | `test_loop_senior_escalate_stops_after_two_retrievals` | Senior ESCALATE means no third search: 2 attempts, INSUFFICIENT, escalation required with the reason. | PASS |
-| UT-rag-32 | `test_loop_pins_equipment_on_every_retrieval_including_reformulated_and_senior` | All three searches carry the application's equipment model and k. | PASS |
-| UT-rag-33 | `test_loop_with_empty_retrieval_goes_through_retries_without_assessor_calls` | Empty results are POOR without model assessment; the loop still reaches senior review and escalates. | PASS |
-| UT-rag-34 | `test_generate_grounded_answer_returns_cited_text_and_demands_inline_citations` | The answer keeps the model's inline [Source: ...] markers and the prompt requires that format. | PASS |
-| UT-rag-35 | `test_run_good_evidence_returns_loop_result_plus_grounded_answer` | With GOOD evidence run() adds the generated cited answer to the retrieval result. | PASS |
-| UT-rag-36 | `test_run_insufficient_evidence_escalates_without_generating_an_answer` | When evidence stays insufficient run() returns the escalation message and never calls the answer model. | PASS |
-| UT-rag-37 | `test_format_retrieval_context_numbers_evidence_with_citation_fields` | The evidence block numbers each chunk and exposes source, page, section and equipment for citing. | PASS |
-| UT-rag-38 | `test_get_client_is_lazy_and_cached` | The OpenAI client is only built on first use (so import/construct needs no key) and then reused. | PASS |
-| UT-rag-39 | `test_node_translates_good_result_into_state` | A GOOD run becomes sufficient, no retries, no escalation, chunks rebuilt and the answer passed through. | PASS |
-| UT-rag-40 | `test_node_translates_escalated_result_into_state` | An INSUFFICIENT run maps to sufficiency False, retry_count attempts-1, escalated and the senior reason. | PASS |
-| UT-rag-41 | `test_node_handles_empty_results` | An escalated run with no chunks yields an empty chunk list rather than failing. | PASS |
-| UT-rag-42 | `test_node_rejects_missing_query_or_equipment_without_running_the_agent[state0-requires a query]` | The node refuses blank query/equipment before invoking the RAG agent. | PASS |
-| UT-rag-43 | `test_node_rejects_missing_query_or_equipment_without_running_the_agent[state1-requires equipment_model]` | The node refuses blank query/equipment before invoking the RAG agent. | PASS |
+| UT-rag-09 | `test_junior_search_without_a_tool_call_searches_the_engineers_question` | A reply with no tool call must not fail the request: the mandatory search runs on the question itself. | PASS |
+| UT-rag-10 | `test_junior_search_with_an_unusable_tool_call_falls_back_to_the_question[bad-json]` | Unreadable arguments, a missing or blank query, or the wrong tool all fall back to searching the question. | PASS |
+| UT-rag-11 | `test_junior_search_with_an_unusable_tool_call_falls_back_to_the_question[list]` | Unreadable arguments, a missing or blank query, or the wrong tool all fall back to searching the question. | PASS |
+| UT-rag-12 | `test_junior_search_with_an_unusable_tool_call_falls_back_to_the_question[null]` | Unreadable arguments, a missing or blank query, or the wrong tool all fall back to searching the question. | PASS |
+| UT-rag-13 | `test_junior_search_with_an_unusable_tool_call_falls_back_to_the_question[string]` | Unreadable arguments, a missing or blank query, or the wrong tool all fall back to searching the question. | PASS |
+| UT-rag-14 | `test_junior_search_with_an_unusable_tool_call_falls_back_to_the_question[no-query]` | Unreadable arguments, a missing or blank query, or the wrong tool all fall back to searching the question. | PASS |
+| UT-rag-15 | `test_junior_search_with_an_unusable_tool_call_falls_back_to_the_question[empty-query]` | Unreadable arguments, a missing or blank query, or the wrong tool all fall back to searching the question. | PASS |
+| UT-rag-16 | `test_junior_search_with_an_unusable_tool_call_falls_back_to_the_question[blank-query]` | Unreadable arguments, a missing or blank query, or the wrong tool all fall back to searching the question. | PASS |
+| UT-rag-17 | `test_junior_search_with_an_unusable_tool_call_falls_back_to_the_question[null-query]` | Unreadable arguments, a missing or blank query, or the wrong tool all fall back to searching the question. | PASS |
+| UT-rag-18 | `test_junior_search_with_an_unusable_tool_call_falls_back_to_the_question[number-query]` | Unreadable arguments, a missing or blank query, or the wrong tool all fall back to searching the question. | PASS |
+| UT-rag-19 | `test_junior_search_with_an_unusable_tool_call_falls_back_to_the_question[wrong-tool]` | Unreadable arguments, a missing or blank query, or the wrong tool all fall back to searching the question. | PASS |
+| UT-rag-20 | `test_junior_search_with_an_unusable_tool_call_falls_back_to_the_question[empty-calls]` | Unreadable arguments, a missing or blank query, or the wrong tool all fall back to searching the question. | PASS |
+| UT-rag-21 | `test_the_fallback_search_is_still_pinned_to_the_selected_equipment` | The fallback keeps the isolation boundary: equipment and result count come from the application. | PASS |
+| UT-rag-22 | `test_a_usable_tool_call_is_not_replaced_by_the_fallback` | The model's own query is used whenever it is a real one. | PASS |
+| UT-rag-23 | `test_the_retrieval_loop_survives_a_junior_agent_that_makes_no_tool_call` | The whole loop completes when the junior reply is unusable: the question is searched and assessed. | PASS |
+| UT-rag-24 | `test_assess_retrieval_only_accepts_the_single_word_good[GOOD-True]` | Assessment is True only for exactly GOOD (case/whitespace-insensitive); anything else is POOR. | PASS |
+| UT-rag-25 | `test_assess_retrieval_only_accepts_the_single_word_good[ good\n-True]` | Assessment is True only for exactly GOOD (case/whitespace-insensitive); anything else is POOR. | PASS |
+| UT-rag-26 | `test_assess_retrieval_only_accepts_the_single_word_good[POOR-False]` | Assessment is True only for exactly GOOD (case/whitespace-insensitive); anything else is POOR. | PASS |
+| UT-rag-27 | `test_assess_retrieval_only_accepts_the_single_word_good[GOOD enough, I suppose-False]` | Assessment is True only for exactly GOOD (case/whitespace-insensitive); anything else is POOR. | PASS |
+| UT-rag-28 | `test_assess_retrieval_only_accepts_the_single_word_good[-False]` | Assessment is True only for exactly GOOD (case/whitespace-insensitive); anything else is POOR. | PASS |
+| UT-rag-29 | `test_assess_retrieval_with_no_results_is_poor_without_calling_the_model` | Empty retrieval is POOR immediately and costs no model call. | PASS |
+| UT-rag-30 | `test_assess_retrieval_prompt_carries_question_equipment_and_evidence` | The assessor sees the engineer question, the selected equipment and the evidence text. | PASS |
+| UT-rag-31 | `test_reformulate_query_returns_stripped_query_and_keeps_equipment_in_prompt` | Reformulation returns the trimmed new query and the prompt pins the selected equipment. | PASS |
+| UT-rag-32 | `test_reformulate_query_with_an_empty_reply_falls_back_to_the_original_question[]` | An empty or missing reformulation must not abort the request: the original question is searched again. | PASS |
+| UT-rag-33 | `test_reformulate_query_with_an_empty_reply_falls_back_to_the_original_question[ ]` | An empty or missing reformulation must not abort the request: the original question is searched again. | PASS |
+| UT-rag-34 | `test_reformulate_query_with_an_empty_reply_falls_back_to_the_original_question[None]` | An empty or missing reformulation must not abort the request: the original question is searched again. | PASS |
+| UT-rag-35 | `test_reformulate_query_with_no_choices_falls_back_to_the_original_question` | A response with no choices is treated like an empty reformulation. | PASS |
+| UT-rag-36 | `test_loop_with_an_empty_reformulation_escalates_instead_of_failing` | An empty reformulation leads to a second look at the same question, then the senior review escalates. | PASS |
+| UT-rag-37 | `test_senior_review_parses_retry_with_new_query` | A well-formed RETRY reply yields decision, reason and the new query. | PASS |
+| UT-rag-38 | `test_senior_review_parses_escalate_and_ignores_none_query` | ESCALATE with QUERY: NONE gives no query. | PASS |
+| UT-rag-39 | `test_senior_review_retry_without_usable_query_is_downgraded_to_escalate` | RETRY with QUERY: NONE is unsafe, so it becomes ESCALATE with an explanatory reason. | PASS |
+| UT-rag-40 | `test_senior_review_malformed_output_defaults_to_escalate[]` | Unparseable or invalid senior output fails safe to ESCALATE. | PASS |
+| UT-rag-41 | `test_senior_review_malformed_output_defaults_to_escalate[I would retry this one.]` | Unparseable or invalid senior output fails safe to ESCALATE. | PASS |
+| UT-rag-42 | `test_senior_review_malformed_output_defaults_to_escalate[DECISION: MAYBE\nQUERY: foo]` | Unparseable or invalid senior output fails safe to ESCALATE. | PASS |
+| UT-rag-43 | `test_senior_review_decision_is_case_insensitive` | A lower-case decision word is still understood. | PASS |
+| UT-rag-44 | `test_loop_good_first_attempt_stops_after_one_retrieval` | GOOD evidence on the first search ends the loop: 1 attempt, no reformulation, no senior. | PASS |
+| UT-rag-45 | `test_loop_reformulates_after_poor_and_succeeds_on_second_attempt` | POOR then reformulated query then GOOD gives 2 attempts with the new query, senior unused. | PASS |
+| UT-rag-46 | `test_loop_senior_retry_gives_third_good_retrieval` | Two POOR attempts then senior RETRY then GOOD gives 3 attempts, senior_decision RETRY. | PASS |
+| UT-rag-47 | `test_loop_never_exceeds_three_retrievals_and_escalates_when_third_is_poor` | Even if every assessment is POOR, there are exactly three searches (2 junior + 1 senior) then escalation. | PASS |
+| UT-rag-48 | `test_loop_senior_escalate_stops_after_two_retrievals` | Senior ESCALATE means no third search: 2 attempts, INSUFFICIENT, escalation required with the reason. | PASS |
+| UT-rag-49 | `test_loop_pins_equipment_on_every_retrieval_including_reformulated_and_senior` | All three searches carry the application's equipment model and k. | PASS |
+| UT-rag-50 | `test_loop_with_empty_retrieval_goes_through_retries_without_assessor_calls` | Empty results are POOR without model assessment; the loop still reaches senior review and escalates. | PASS |
+| UT-rag-51 | `test_generate_grounded_answer_returns_cited_text_and_demands_inline_citations` | The answer keeps the model's inline [Source: ...] markers and the prompt requires that format. | PASS |
+| UT-rag-52 | `test_run_good_evidence_returns_loop_result_plus_grounded_answer` | With GOOD evidence run() adds the generated cited answer to the retrieval result. | PASS |
+| UT-rag-53 | `test_run_insufficient_evidence_escalates_without_generating_an_answer` | When evidence stays insufficient run() returns the escalation message and never calls the answer model. | PASS |
+| UT-rag-54 | `test_format_retrieval_context_numbers_evidence_with_citation_fields` | The evidence block numbers each chunk and exposes source, page, section and equipment for citing. | PASS |
+| UT-rag-55 | `test_get_client_is_lazy_and_cached` | The OpenAI client is only built on first use (so import/construct needs no key) and then reused. | PASS |
+| UT-rag-56 | `test_node_translates_good_result_into_state` | A GOOD run becomes sufficient, no retries, no escalation, chunks rebuilt and the answer passed through. | PASS |
+| UT-rag-57 | `test_node_translates_escalated_result_into_state` | An INSUFFICIENT run maps to sufficiency False, retry_count attempts-1, escalated and the senior reason. | PASS |
+| UT-rag-58 | `test_node_handles_empty_results` | An escalated run with no chunks yields an empty chunk list rather than failing. | PASS |
+| UT-rag-59 | `test_node_rejects_missing_query_or_equipment_without_running_the_agent[state0-requires a query]` | The node refuses blank query/equipment before invoking the RAG agent. | PASS |
+| UT-rag-60 | `test_node_rejects_missing_query_or_equipment_without_running_the_agent[state1-requires equipment_model]` | The node refuses blank query/equipment before invoking the RAG agent. | PASS |
 
 ### unit/test_request.py (37 tests)
 
@@ -1111,21 +1159,21 @@ Run with `pytest tests` (fake model, no key, no network). **Result: 588 tests, 5
 
 ## 12. Suspected source issues found while writing the agent unit tests
 
-Writing fake-model tests for the six agent test files exposed behaviours that look fragile. None is a confirmed crash in normal use, and nothing under `src/` was changed. Where a test pins today's behaviour (for example 'raises on malformed model output'), it will need updating if the code is hardened.
+Writing fake-model tests for the six agent test files exposed behaviours that looked fragile. S1 to S7 were then fixed in `src/asa/agents/diagnostic.py` and `src/asa/agents/rag.py` (an unusable model reply now ends in an escalation or a safe fallback instead of an unavailable error), and the tests were updated to expect the new behaviour: 45 of the unit tests fail against the original code. S8 to S11 are left open.
 
-| # | Where | Issue | Effect | Suggested change |
-|---|---|---|---|---|
-| S1 | `diagnostic_node` | `json.loads` of the model reply is not guarded; a reply such as `{not json`, `[]` or `null` raises out of the node | A malformed model reply fails the whole request (`unavailable`) instead of escalating | Catch parse errors and escalate with a reason |
-| S2 | `diagnostic_node` | `float(item.get('likelihood'))` raises for `"high"` or `null` | One bad likelihood crashes the diagnosis | Default to 0.0 on a bad value |
-| S3 | `diagnostic_node`, `_validate_diagnostic_claims` | `message.content.strip()` raises `AttributeError` when the model returns `None` content (a refusal or content filter) | Request fails | Treat `None` as an empty reply |
-| S4 | `diagnostic_node` | `list(item.get('supporting_chunk_ids'))` turns the string `'c1'` into `['c', '1']` | Claim silently dropped (safe but wrong) | Accept a single string as one id |
-| S5 | `diagnostic_node` | A cause or step whose text is empty is not filtered before validation | A wasted validator call, possible empty bullet | Skip empty text |
-| S6 | `run_retrieval_loop` (RAG) | No try/except around the junior agent's tool call: a missing tool call raises `RuntimeError`, non-JSON arguments raise `JSONDecodeError` | Request fails instead of falling back to a plain search or escalating | Fall back to searching the question |
-| S7 | `reformulate_query` (RAG) | The reformulated query is not validated; an empty one reaches `execute_tool`, which raises `ValueError` | Request aborts instead of escalating | Fall back to the original query or escalate |
-| S8 | `senior_review` (RAG) | An invalid decision such as `MAYBE` with `QUERY: foo` returns `ESCALATE` but keeps the model's query `foo` | Harmless today (the loop ignores it) | Clear the query when escalating |
-| S9 | `assess_retrieval` (RAG) | Only the exact word `GOOD` counts; `GOOD.` or `**GOOD**` is treated as POOR | Extra retrievals (fail-safe) | Strip punctuation and markdown before comparing |
-| S10 | `safety_node` | The deterministic safety rules are not called inside the node; they gate the request in `chat_service` before the agents. A direct call to the node depends only on the model's verdict | None through the API; a risk if the node is ever called from another entry point | Document that the gate is part of the safety design, or also apply the rules inside the node |
-| S11 | `safety_node` | When an ALLOW is rejected and escalated, the state still carries the validated hazards, PPE and claims | Arguably intended (the reviewer sees the evidence) | Decide and pin it with a test |
+| # | Where | Issue | Effect | Suggested change | Status |
+|---|---|---|---|---|---|
+| S1 | `diagnostic_node` | `json.loads` of the model reply is not guarded; a reply such as `{not json`, `[]` or `null` raises out of the node | A malformed model reply fails the whole request (`unavailable`) instead of escalating | Catch parse errors and escalate with a reason | **Fixed** |
+| S2 | `diagnostic_node` | `float(item.get('likelihood'))` raises for `"high"` or `null` | One bad likelihood crashes the diagnosis | Default to 0.0 on a bad value | **Fixed** |
+| S3 | `diagnostic_node`, `_validate_diagnostic_claims` | `message.content.strip()` raises `AttributeError` when the model returns `None` content (a refusal or content filter) | Request fails | Treat `None` as an empty reply | **Fixed** |
+| S4 | `diagnostic_node` | `list(item.get('supporting_chunk_ids'))` turns the string `'c1'` into `['c', '1']` | Claim silently dropped (safe but wrong) | Accept a single string as one id | **Fixed** |
+| S5 | `diagnostic_node` | A cause or step whose text is empty is not filtered before validation | A wasted validator call, possible empty bullet | Skip empty text | **Fixed** |
+| S6 | `run_retrieval_loop` (RAG) | No try/except around the junior agent's tool call: a missing tool call raises `RuntimeError`, non-JSON arguments raise `JSONDecodeError` | Request fails instead of falling back to a plain search or escalating | Fall back to searching the question | **Fixed** |
+| S7 | `reformulate_query` (RAG) | The reformulated query is not validated; an empty one reaches `execute_tool`, which raises `ValueError` | Request aborts instead of escalating | Fall back to the original query or escalate | **Fixed** |
+| S8 | `senior_review` (RAG) | An invalid decision such as `MAYBE` with `QUERY: foo` returns `ESCALATE` but keeps the model's query `foo` | Harmless today (the loop ignores it) | Clear the query when escalating | Open (harmless) |
+| S9 | `assess_retrieval` (RAG) | Only the exact word `GOOD` counts; `GOOD.` or `**GOOD**` is treated as POOR | Extra retrievals (fail-safe) | Strip punctuation and markdown before comparing | Open (fail-safe) |
+| S10 | `safety_node` | The deterministic safety rules are not called inside the node; they gate the request in `chat_service` before the agents. A direct call to the node depends only on the model's verdict | None through the API; a risk if the node is ever called from another entry point | Document that the gate is part of the safety design, or also apply the rules inside the node | Open (design note) |
+| S11 | `safety_node` | When an ALLOW is rejected and escalated, the state still carries the validated hazards, PPE and claims | Arguably intended (the reviewer sees the evidence) | Decide and pin it with a test | Open (decision) |
 
-S1 to S3 are the most worth fixing: a bad model reply should end in an escalation, which is the system's fail-safe, not in an unavailable error. S10 is a design note for the safety report.
+The fixes keep the system's fail-safe: a model reply that cannot be read leads to a human escalation, never to an ungrounded answer. S10 is a design note for the safety report.
 

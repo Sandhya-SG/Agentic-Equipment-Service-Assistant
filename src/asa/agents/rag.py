@@ -246,6 +246,38 @@ class AgenticRAGAgent:
             }
         ]
 
+    @staticmethod
+    def _junior_tool_call(
+        response: Any,
+        question: str,
+    ) -> tuple[str, dict[str, Any]]:
+        """The tool name and arguments from the Junior Agent's reply, or a plain search of the question.
+
+        The fallback is safe: it is the same mandatory tool, with the equipment and the result count still
+        set by the application afterwards, and the query is the engineer's own words.
+        """
+        fallback = (
+            "search_service_documents",
+            {"query": question},
+        )
+
+        try:
+            message = response.choices[0].message
+            tool_call = message.tool_calls[0]
+            tool_name = tool_call.function.name
+            arguments = json.loads(tool_call.function.arguments)
+        except (AttributeError, IndexError, TypeError, ValueError):
+            print("Junior Agent gave no usable tool call; searching the engineer's question.")
+            return fallback
+
+        query = arguments.get("query") if isinstance(arguments, dict) else None
+
+        if tool_name != "search_service_documents" or not isinstance(query, str) or not query.strip():
+            print("Junior Agent gave no usable search query; searching the engineer's question.")
+            return fallback
+
+        return tool_name, arguments
+
     def junior_search(
         self,
         question: str,
@@ -304,16 +336,13 @@ class AgenticRAGAgent:
             temperature=0,
         )
 
-        message = response.choices[0].message
-
-        if not message.tool_calls:
-            raise RuntimeError("Junior Agent did not request the required retrieval tool.")
-
-        tool_call = message.tool_calls[0]
-
-        tool_name = tool_call.function.name
-
-        arguments = json.loads(tool_call.function.arguments)
+        # Retrieval is mandatory, and the application owns the tool and the equipment. If the model's tool
+        # call is missing, unreadable or has no query, search the engineer's own question instead of failing
+        # the request.
+        tool_name, arguments = self._junior_tool_call(
+            response,
+            question,
+        )
 
         # --------------------------------------------------
         # Security / isolation boundary
@@ -528,7 +557,20 @@ Rules:
             temperature=0,
         )
 
-        return response.choices[0].message.content.strip()
+        try:
+            content = response.choices[0].message.content
+        except (AttributeError, IndexError, TypeError):
+            content = None
+
+        query = content.strip() if isinstance(content, str) else ""
+
+        # An empty reformulation would abort the request; searching the original question again lets the
+        # loop assess it and escalate through the senior review if the evidence is still insufficient.
+        if not query:
+            print("Reformulation returned no query; searching the original question again.")
+            return question
+
+        return query
 
     @traced(
         "senior-retrieval-agent",

@@ -523,15 +523,181 @@ def test_missing_equipment_model_raises_before_any_retrieval(monkeypatch):
     assert rag.calls == []
 
 
-def test_malformed_json_never_yields_an_ungrounded_diagnosis(monkeypatch):
-    """Malformed model JSON must not produce causes or steps (currently it raises)."""
-    _install(monkeypatch, _good_rag(), FakeModel("{not json"))
+@pytest.mark.parametrize(
+    "reply",
+    ["{not json", "", "   ", "[]", "null", "42", '"a string"', "[{\"cause\": \"x\"}]", "Sure! Here is the diagnosis."],
+)
+def test_an_unreadable_diagnosis_escalates_instead_of_failing_the_request(monkeypatch, reply):
+    """A malformed or non-object model reply must end in an escalation with no causes and no steps."""
+    model = FakeModel(reply)
+    _install(monkeypatch, _good_rag(attempts=2), model)
 
-    try:
-        update = diag.diagnostic_node(dict(STATE))
-    except json.JSONDecodeError:
-        return  # fails loudly: no ungrounded output reaches the engineer
+    update = diag.diagnostic_node(dict(STATE))
+
+    assert update["escalated"] is True
+    assert "could not be read" in update["escalation_reason"]
+    assert "Human escalation is required" in update["final_answer"]
     assert update["root_causes"] == [] and update["troubleshooting_steps"] == []
+    assert model.validation_prompts == []  # nothing was validated: there was nothing to validate
+
+
+def test_an_unreadable_diagnosis_keeps_the_retrieved_evidence_and_counts(monkeypatch):
+    """The escalation still carries the evidence and the retry count so the reviewer sees what was found."""
+    _install(monkeypatch, _good_rag(attempts=3), FakeModel("{not json"))
+
+    update = diag.diagnostic_node(dict(STATE))
+
+    assert [chunk.chunk_id for chunk in update["retrieved_chunks"]] == ["c1", "c2"]
+    assert update["retry_count"] == 2
+    assert update["sufficiency"] is True
+    assert update["retrieval_strategy"] == "hybrid"
+    assert set(update) == {
+        "retrieval_strategy", "retrieved_chunks", "sufficiency", "retry_count",
+        "root_causes", "troubleshooting_steps", "escalated", "escalation_reason", "final_answer",
+    }
+
+
+def _none_content_model(validator_reply="SUPPORTED", generation=None):
+    """A model whose generation call returns `generation` (None = no content) and validators return a reply."""
+
+    def create(**kwargs):
+        if kwargs.get("response_format"):
+            return _response(generation)
+        return _response(validator_reply)
+
+    return create
+
+
+def test_a_generation_reply_with_no_content_escalates(monkeypatch):
+    """A refusal or content-filter stop (content None) must escalate, not crash with AttributeError."""
+    rag = FakeRag(_good_rag())
+    monkeypatch.setattr(diag, "rag_agent", rag)
+    monkeypatch.setattr(diag.client.chat.completions, "create", _none_content_model())
+
+    update = diag.diagnostic_node(dict(STATE))
+
+    assert update["escalated"] is True
+    assert update["root_causes"] == [] and update["troubleshooting_steps"] == []
+
+
+def test_a_generation_response_with_no_choices_escalates(monkeypatch):
+    """A response object without choices is treated like an unreadable reply."""
+    monkeypatch.setattr(diag, "rag_agent", FakeRag(_good_rag()))
+    monkeypatch.setattr(diag.client.chat.completions, "create", lambda **kw: SimpleNamespace(choices=[]))
+
+    assert diag.diagnostic_node(dict(STATE))["escalated"] is True
+
+
+@pytest.mark.parametrize("likelihood", ["high", None, [], {}, "n/a", float("nan")])
+def test_an_unusable_likelihood_becomes_zero_and_does_not_crash(monkeypatch, likelihood):
+    """A bad likelihood costs only that number: the cause is kept with 0.0."""
+    diagnosis = {
+        "candidate_causes": [{"cause": "Heater failure", "likelihood": likelihood, "supporting_chunk_ids": ["c1"]}],
+        "recommended_checks": [],
+    }
+    model = FakeModel(json.dumps(diagnosis, allow_nan=True))
+    _install(monkeypatch, _good_rag(), model)
+
+    update = diag.diagnostic_node(dict(STATE))
+
+    assert [(c.cause, c.likelihood) for c in update["root_causes"]] == [("Heater failure", 0.0)]
+    assert update["escalated"] is False
+
+
+def test_a_numeric_string_likelihood_is_still_read(monkeypatch):
+    """'0.6' is a usable number; only unusable values fall back to 0.0."""
+    diagnosis = {
+        "candidate_causes": [{"cause": "Heater failure", "likelihood": "0.6", "supporting_chunk_ids": ["c1"]}],
+        "recommended_checks": [],
+    }
+    _install(monkeypatch, _good_rag(), FakeModel(diagnosis))
+
+    assert diag.diagnostic_node(dict(STATE))["root_causes"][0].likelihood == 0.6
+
+
+def test_a_validator_reply_with_no_content_drops_the_claim(monkeypatch):
+    """If the validator returns no content the claim is not SUPPORTED, so it is removed (fail closed)."""
+    monkeypatch.setattr(diag, "rag_agent", FakeRag(_good_rag()))
+    monkeypatch.setattr(
+        diag.client.chat.completions, "create", _none_content_model(validator_reply=None, generation=json.dumps(DIAGNOSIS))
+    )
+
+    update = diag.diagnostic_node(dict(STATE))
+
+    assert update["root_causes"] == [] and update["troubleshooting_steps"] == []
+    assert update["escalated"] is False
+
+
+def test_a_citation_given_as_a_single_string_is_one_chunk_id(monkeypatch):
+    """'c1' as a string means chunk c1, not the characters 'c' and '1'."""
+    diagnosis = {
+        "candidate_causes": [{"cause": "Heater failure", "likelihood": 0.7, "supporting_chunk_ids": "c1"}],
+        "recommended_checks": [{"action": "Check heater fuse", "supporting_chunk_ids": "c2"}],
+    }
+    _install(monkeypatch, _good_rag(), FakeModel(diagnosis))
+
+    update = diag.diagnostic_node(dict(STATE))
+
+    assert update["root_causes"][0].supporting_chunk_ids == ["c1"]
+    assert update["troubleshooting_steps"][0].supporting_chunk_ids == ["c2"]
+
+
+@pytest.mark.parametrize("citations", [None, 5, {}, [None, 7], [""], ["  "]])
+def test_unusable_citations_leave_the_claim_without_evidence_so_it_is_dropped(monkeypatch, citations):
+    """A claim with no readable citation has no evidence: it is removed without calling the validator."""
+    diagnosis = {
+        "candidate_causes": [{"cause": "Heater failure", "likelihood": 0.7, "supporting_chunk_ids": citations}],
+        "recommended_checks": [],
+    }
+    model = FakeModel(diagnosis)
+    _install(monkeypatch, _good_rag(), model)
+
+    update = diag.diagnostic_node(dict(STATE))
+
+    assert update["root_causes"] == []
+    assert model.validation_prompts == []
+
+
+def test_causes_and_checks_with_empty_text_are_skipped_before_validation(monkeypatch):
+    """An empty cause or check is not a claim: it costs no validator call and leaves no empty bullet."""
+    diagnosis = {
+        "candidate_causes": [
+            {"cause": "   ", "likelihood": 0.9, "supporting_chunk_ids": ["c1"]},
+            {"cause": "Heater failure", "likelihood": 0.5, "supporting_chunk_ids": ["c1"]},
+        ],
+        "recommended_checks": [
+            {"action": "", "supporting_chunk_ids": ["c2"]},
+            {"action": "Check heater fuse", "supporting_chunk_ids": ["c2"]},
+        ],
+    }
+    model = FakeModel(diagnosis)
+    _install(monkeypatch, _good_rag(), model)
+
+    update = diag.diagnostic_node(dict(STATE))
+
+    assert [c.cause for c in update["root_causes"]] == ["Heater failure"]
+    assert [(s.order, s.action) for s in update["troubleshooting_steps"]] == [(1, "Check heater fuse")]
+    assert len(model.validation_prompts) == 2
+
+
+@pytest.mark.parametrize(
+    "diagnosis",
+    [
+        {"candidate_causes": "Heater failure", "recommended_checks": "Check fuse"},
+        {"candidate_causes": ["Heater failure"], "recommended_checks": [None, 3, "x"]},
+        {"candidate_causes": None, "recommended_checks": None},
+        {},
+    ],
+)
+def test_wrongly_typed_lists_yield_an_empty_but_valid_diagnosis(monkeypatch, diagnosis):
+    """Lists of the wrong type or entries that are not objects are ignored, never raised on."""
+    _install(monkeypatch, _good_rag(), FakeModel(diagnosis))
+
+    update = diag.diagnostic_node(dict(STATE))
+
+    assert update["root_causes"] == [] and update["troubleshooting_steps"] == []
+    assert update["escalated"] is False
+    assert "not confirmed" in update["final_answer"]
 
 
 def test_step_has_no_executable_or_actuator_field(monkeypatch):

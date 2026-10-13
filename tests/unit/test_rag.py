@@ -199,34 +199,80 @@ def test_junior_search_requires_equipment_model(monkeypatch):
     assert agent.client.calls == []
 
 
-def test_junior_search_raises_when_model_does_not_call_the_tool(monkeypatch):
-    """A model reply without a tool call fails loudly rather than answering from nothing."""
-    agent = _make_agent(monkeypatch, junior=[_msg("I think the answer is...", tool_calls=None)])
-
-    with pytest.raises(RuntimeError, match="did not request"):
-        agent.junior_search(QUESTION, EQUIPMENT)
-
-
-def test_junior_search_malformed_tool_arguments_raise_and_never_search(monkeypatch):
-    """Non-JSON tool arguments raise a JSON error and no retrieval happens."""
+def test_junior_search_without_a_tool_call_searches_the_engineers_question(monkeypatch):
+    """A reply with no tool call must not fail the request: the mandatory search runs on the question itself."""
     retriever = FakeRetriever(default=[_chunk()])
-    agent = _make_agent(monkeypatch, retriever, junior=[_msg(tool_calls=_tool_call("{not json"))])
+    agent = _make_agent(monkeypatch, retriever, junior=[_msg("I think the answer is...", tool_calls=None)])
 
-    with pytest.raises(json.JSONDecodeError):
-        agent.junior_search(QUESTION, EQUIPMENT)
+    out = agent.junior_search(QUESTION, EQUIPMENT, k=4)
 
-    assert retriever.calls == []
+    assert out["search_query"] == QUESTION
+    assert out["tool_name"] == "search_service_documents"
+    assert retriever.calls == [{"query": QUESTION, "equipment_model": EQUIPMENT, "k": 4}]
 
 
-def test_junior_search_rejects_tool_call_without_query(monkeypatch):
-    """A tool call whose arguments omit the query is rejected instead of searching an empty string."""
+@pytest.mark.parametrize(
+    "tool_calls",
+    [
+        _tool_call("{not json"),
+        _tool_call("[]"),
+        _tool_call("null"),
+        _tool_call("\"just a string\""),
+        _tool_call({}),
+        _tool_call({"query": ""}),
+        _tool_call({"query": "   "}),
+        _tool_call({"query": None}),
+        _tool_call({"query": 42}),
+        _tool_call({"query": "pump removal"}, name="some_other_tool"),
+        [],
+    ],
+    ids=["bad-json", "list", "null", "string", "no-query", "empty-query", "blank-query", "null-query", "number-query", "wrong-tool", "empty-calls"],
+)
+def test_junior_search_with_an_unusable_tool_call_falls_back_to_the_question(monkeypatch, tool_calls):
+    """Unreadable arguments, a missing or blank query, or the wrong tool all fall back to searching the question."""
     retriever = FakeRetriever(default=[_chunk()])
-    agent = _make_agent(monkeypatch, retriever, junior=[_msg(tool_calls=_tool_call({}))])
+    agent = _make_agent(monkeypatch, retriever, junior=[_msg(tool_calls=tool_calls)])
 
-    with pytest.raises(ValueError, match="requires query"):
-        agent.junior_search(QUESTION, EQUIPMENT)
+    out = agent.junior_search(QUESTION, EQUIPMENT)
 
-    assert retriever.calls == []
+    assert out["search_query"] == QUESTION
+    assert out["tool_name"] == "search_service_documents"
+    assert len(retriever.calls) == 1
+    assert retriever.calls[0]["query"] == QUESTION
+
+
+def test_the_fallback_search_is_still_pinned_to_the_selected_equipment(monkeypatch):
+    """The fallback keeps the isolation boundary: equipment and result count come from the application."""
+    retriever = FakeRetriever(default=[_chunk()])
+    agent = _make_agent(monkeypatch, retriever, junior=[_msg(tool_calls=None)])
+
+    agent.junior_search(QUESTION, EQUIPMENT, k=3)
+
+    assert retriever.calls[0]["equipment_model"] == EQUIPMENT
+    assert retriever.calls[0]["k"] == 3
+
+
+def test_a_usable_tool_call_is_not_replaced_by_the_fallback(monkeypatch):
+    """The model's own query is used whenever it is a real one."""
+    retriever = FakeRetriever(default=[_chunk()])
+    agent = _make_agent(monkeypatch, retriever, junior=[_search("coolant pump removal")])
+
+    out = agent.junior_search(QUESTION, EQUIPMENT)
+
+    assert out["search_query"] == "coolant pump removal"
+    assert retriever.calls[0]["query"] == "coolant pump removal"
+
+
+def test_the_retrieval_loop_survives_a_junior_agent_that_makes_no_tool_call(monkeypatch):
+    """The whole loop completes when the junior reply is unusable: the question is searched and assessed."""
+    retriever = FakeRetriever(default=[_chunk()])
+    agent = _make_agent(monkeypatch, retriever, junior=[_msg("no tool", tool_calls=None)], assess=[_good()])
+
+    out = agent.run_retrieval_loop(QUESTION, EQUIPMENT)
+
+    assert out["retrieval_status"] == "GOOD"
+    assert out["final_query"] == QUESTION
+    assert out["retrieval_attempts"] == 1
 
 
 # ----------------------------------------------------------------------
@@ -292,6 +338,40 @@ def test_reformulate_query_returns_stripped_query_and_keeps_equipment_in_prompt(
     assert new_query == "coolant pump removal procedure"
     prompt = agent.client.stage_calls("reformulate")[0]["messages"][1]["content"]
     assert EQUIPMENT in prompt and QUESTION in prompt
+
+
+@pytest.mark.parametrize("reply", ["", "   ", None])
+def test_reformulate_query_with_an_empty_reply_falls_back_to_the_original_question(monkeypatch, reply):
+    """An empty or missing reformulation must not abort the request: the original question is searched again."""
+    agent = _make_agent(monkeypatch, reformulate=[_msg(reply)])
+
+    assert agent.reformulate_query(QUESTION, EQUIPMENT, [_chunk_dict()]) == QUESTION
+
+
+def test_reformulate_query_with_no_choices_falls_back_to_the_original_question(monkeypatch):
+    """A response with no choices is treated like an empty reformulation."""
+    agent = _make_agent(monkeypatch, reformulate=[SimpleNamespace(choices=[])])
+
+    assert agent.reformulate_query(QUESTION, EQUIPMENT, [_chunk_dict()]) == QUESTION
+
+
+def test_loop_with_an_empty_reformulation_escalates_instead_of_failing(monkeypatch):
+    """An empty reformulation leads to a second look at the same question, then the senior review escalates."""
+    retriever = FakeRetriever(default=[_chunk()])
+    agent = _make_agent(
+        monkeypatch,
+        retriever,
+        junior=[_search("first")],
+        assess=[_poor(), _poor()],
+        reformulate=[_msg("")],
+        senior=[_msg("DECISION: ESCALATE\nREASON: not documented\nQUERY: NONE")],
+    )
+
+    out = agent.run_retrieval_loop(QUESTION, EQUIPMENT)
+
+    assert retriever.calls[1]["query"] == QUESTION
+    assert out["retrieval_status"] == "INSUFFICIENT"
+    assert out["escalation_required"] is True
 
 
 # ----------------------------------------------------------------------
