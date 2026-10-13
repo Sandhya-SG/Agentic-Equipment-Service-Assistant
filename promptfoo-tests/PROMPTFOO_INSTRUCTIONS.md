@@ -60,7 +60,7 @@ Details and evidence are in `docs/evaluation-test-cases-and-results.md`.
 
 - **Fixed in this work:** requests without a `conversation_id` all shared the id `demo-session`, so unrelated API callers continued each other's pending clarification. Each request now gets its own id unless the client sends one (regression test in `tests/test_chat.py`).
 - **Fixed on main by the team, confirmed by these suites:** the Request agent no longer over-asks on short clear questions (the two over-ask checks failed before and pass now), hazardous requests are no longer mostly met with a bare clarification (1 of 25, was 10), and every request type is under the 10 s target (the hazardous path went from 14 s to 7.8 s).
-- **Still open:** the input guard blocks 6 of 24 legitimate questions and misses 10 obfuscated attacks (`known-gaps.yaml`); grounding is 87.5% against the 90% target, with one answer that says to reconnect the EGW quick connects where the manual says to disconnect them (DeepEval).
+- **Still open:** the input guard blocks 6 of 24 legitimate questions and misses 10 obfuscated attacks (`known-gaps.yaml`); grounding is 87.5% against the 90% target, with g04 flagged by the judge for "reconnect" (the manual itself says "unplug the quick connect and reconnect to the QD for air supply", so this is mostly the judge misreading ambiguous wording).
 - **Windows only:** a request containing non-ASCII text returned 503 when the backend ran without `PYTHONUTF8=1`, because the agents print the text to a cp1252 console. Linux and Docker are not affected.
 
 ## Notes
