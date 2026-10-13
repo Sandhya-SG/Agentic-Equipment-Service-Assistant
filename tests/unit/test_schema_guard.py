@@ -76,7 +76,9 @@ def test_an_unterminated_private_key_is_redacted_to_the_end():
     assert "MIIEvg" not in result.text
 
 
-@pytest.mark.parametrize("assignment", ["password: hunter22", "api_key=abcd1234efgh", "secret = s3cr3t-value", "TOKEN: abcd1234"])
+@pytest.mark.parametrize(
+    "assignment", ["password: hunter22", "api_key=abcd1234efgh", "secret = s3cr3t-value", "TOKEN: abcd1234"]
+)
 def test_credential_assignments_are_redacted(assignment):
     result = G.guard_output(f"The settings say {assignment} for the account.", [])
     assert assignment.split(":")[-1].split("=")[-1].strip() not in result.text
@@ -161,7 +163,7 @@ def test_the_evidence_match_ignores_case():
         '<iframe src="https://evil.example"></iframe>',
         "<embed src=x>",
         "[click](javascript:alert(1))",
-        '<img src=x onerror=alert(1)>',
+        "<img src=x onerror=alert(1)>",
         '<a onclick="steal()">x</a>',
     ],
 )
@@ -260,7 +262,9 @@ def test_an_empty_or_non_text_answer_is_withheld(answer):
 
 
 def test_findings_are_categories_only():
-    result = G.guard_output("Mail jane.doe@example.com, key sk-proj-abcdefghijklmnopqrstuvwx1234567890, +65 9123 4567.", [])
+    result = G.guard_output(
+        "Mail jane.doe@example.com, key sk-proj-abcdefghijklmnopqrstuvwx1234567890, +65 9123 4567.", []
+    )
     assert set(result.findings) == {"email", "secret", "phone"}
     flat = " ".join(result.findings)
     assert "jane" not in flat and "sk-" not in flat and "9123" not in flat
@@ -272,7 +276,9 @@ def test_findings_are_sorted_and_unique():
 
 
 def test_guarding_twice_changes_nothing_more():
-    first = G.guard_output("Mail jane.doe@example.com, call +65 9123 4567, key sk-proj-abcdefghijklmnopqrstuvwx1234567890.", [])
+    first = G.guard_output(
+        "Mail jane.doe@example.com, call +65 9123 4567, key sk-proj-abcdefghijklmnopqrstuvwx1234567890.", []
+    )
     second = G.guard_output(first.text, [])
     assert second.text == first.text and second.action == "none"
 

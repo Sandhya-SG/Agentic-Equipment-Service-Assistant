@@ -12,7 +12,6 @@ import pytest
 import asa.agents.rag as rag
 from asa.graph.state import Chunk
 
-
 EQUIPMENT = "thermal_station"
 QUESTION = "How do I replace the coolant pump?"
 
@@ -217,7 +216,7 @@ def test_junior_search_without_a_tool_call_searches_the_engineers_question(monke
         _tool_call("{not json"),
         _tool_call("[]"),
         _tool_call("null"),
-        _tool_call("\"just a string\""),
+        _tool_call('"just a string"'),
         _tool_call({}),
         _tool_call({"query": ""}),
         _tool_call({"query": "   "}),
@@ -226,7 +225,19 @@ def test_junior_search_without_a_tool_call_searches_the_engineers_question(monke
         _tool_call({"query": "pump removal"}, name="some_other_tool"),
         [],
     ],
-    ids=["bad-json", "list", "null", "string", "no-query", "empty-query", "blank-query", "null-query", "number-query", "wrong-tool", "empty-calls"],
+    ids=[
+        "bad-json",
+        "list",
+        "null",
+        "string",
+        "no-query",
+        "empty-query",
+        "blank-query",
+        "null-query",
+        "number-query",
+        "wrong-tool",
+        "empty-calls",
+    ],
 )
 def test_junior_search_with_an_unusable_tool_call_falls_back_to_the_question(monkeypatch, tool_calls):
     """Unreadable arguments, a missing or blank query, or the wrong tool all fall back to searching the question."""
@@ -381,9 +392,7 @@ def test_loop_with_an_empty_reformulation_escalates_instead_of_failing(monkeypat
 
 def _review(agent_text, monkeypatch):
     agent = _make_agent(monkeypatch, senior=[_msg(agent_text)])
-    return agent.senior_review(
-        QUESTION, EQUIPMENT, "q1", [_chunk_dict()], "q2", [_chunk_dict(chunk_id="c2")]
-    )
+    return agent.senior_review(QUESTION, EQUIPMENT, "q1", [_chunk_dict()], "q2", [_chunk_dict(chunk_id="c2")])
 
 
 def test_senior_review_parses_retry_with_new_query(monkeypatch):
@@ -710,7 +719,9 @@ def test_node_translates_escalated_result_into_state(monkeypatch, orchestrator):
     monkeypatch.setattr(
         orchestrator.rag_agent,
         "run",
-        lambda **kw: _run_result("INSUFFICIENT", attempts=3, escalation=True, reason="not documented", answer="No grounded answer"),
+        lambda **kw: _run_result(
+            "INSUFFICIENT", attempts=3, escalation=True, reason="not documented", answer="No grounded answer"
+        ),
     )
 
     update = orchestrator.agentic_rag_node({"raw_query": "pump?", "equipment_model": EQUIPMENT})
@@ -751,7 +762,7 @@ def test_node_rejects_missing_query_or_equipment_without_running_the_agent(monke
 
 @pytest.mark.parametrize(
     "reply",
-    ["GOOD", "good", "Good.", "GOOD.", "**GOOD**", "`GOOD`", "\"GOOD\"", "Good!", "  GOOD \n", "- GOOD", "GOOD\n"],
+    ["GOOD", "good", "Good.", "GOOD.", "**GOOD**", "`GOOD`", '"GOOD"', "Good!", "  GOOD \n", "- GOOD", "GOOD\n"],
 )
 def test_assess_retrieval_accepts_good_with_harmless_formatting(monkeypatch, reply):
     """S9: 'GOOD.' and '**GOOD**' used to count as POOR and cost an extra retrieval; they are GOOD now."""
@@ -991,4 +1002,8 @@ def test_the_data_rule_is_numbered_after_the_citation_rules(monkeypatch):
     agent.generate_grounded_answer(QUESTION, EQUIPMENT, [_chunk_dict()])
 
     prompt = agent.client.stage_calls("answer")[0]["messages"][-1]["content"]
-    assert prompt.index("15. Use this exact citation format") < prompt.index("16. " + DATA_RULE) < prompt.index("Return only the grounded")
+    assert (
+        prompt.index("15. Use this exact citation format")
+        < prompt.index("16. " + DATA_RULE)
+        < prompt.index("Return only the grounded")
+    )

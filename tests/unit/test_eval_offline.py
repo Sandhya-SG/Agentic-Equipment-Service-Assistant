@@ -294,7 +294,7 @@ def test_the_remaining_known_misses_are_really_not_detected(injection_eval):
 
     for case in injection_eval.load_cases():
         if case.get("known_miss"):
-            assert not scan_user_input(case["text"]).flagged, f'{case["id"]} is now blocked: remove known_miss'
+            assert not scan_user_input(case["text"]).flagged, f"{case['id']} is now blocked: remove known_miss"
 
 
 def test_the_thresholds_file_asks_for_the_stricter_block_rate():
@@ -330,16 +330,35 @@ def test_output_dataset_is_well_formed(output_eval):
 def test_output_dataset_covers_every_finding_and_every_action(output_eval):
     cases = output_eval.load_cases()
     findings = {finding for case in cases for finding in case.get("expect_findings", [])}
-    assert {"secret", "email", "phone", "id_number", "payment_card", "markup", "prompt_leak", "internal_structure", "too_long", "empty_answer"} <= findings
+    assert {
+        "secret",
+        "email",
+        "phone",
+        "id_number",
+        "payment_card",
+        "markup",
+        "prompt_leak",
+        "internal_structure",
+        "too_long",
+        "empty_answer",
+    } <= findings
     assert {case["expect_action"] for case in cases} == {"none", "redacted", "withheld"}
-    assert sum(1 for case in cases if case["expect_action"] == "none") >= 8, "clean answers keep the false-positive rate honest"
+    assert sum(1 for case in cases if case["expect_action"] == "none") >= 8, (
+        "clean answers keep the false-positive rate honest"
+    )
 
 
 def test_output_metrics_with_a_stub_firewall(output_eval):
     cases = [
         {"id": "c1", "answer": "clean one", "expect_action": "none"},
         {"id": "c2", "answer": "clean two", "expect_action": "none"},
-        {"id": "u1", "answer": "secret one", "expect_action": "redacted", "must_not_contain": ["secret"], "expect_findings": ["secret"]},
+        {
+            "id": "u1",
+            "answer": "secret one",
+            "expect_action": "redacted",
+            "must_not_contain": ["secret"],
+            "expect_findings": ["secret"],
+        },
         {"id": "u2", "answer": "leak two", "expect_action": "withheld", "expect_findings": ["prompt_leak"]},
     ]
 

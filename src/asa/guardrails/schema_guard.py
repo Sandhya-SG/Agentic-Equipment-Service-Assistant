@@ -50,14 +50,18 @@ _HARD_SECRETS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"), "[REDACTED TOKEN]"),
     (re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/-]{20,}=*"), "Bearer [REDACTED TOKEN]"),
     (
-        re.compile(r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)"),
+        re.compile(
+            r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)"
+        ),
         "[REDACTED PRIVATE KEY]",
     ),
 ]
 
 # "password = hunter2": the manual's own default settings could look like this, so these are kept when the same
 # text is in the evidence.
-_CREDENTIAL_ASSIGNMENT = re.compile(r"(?i)\b(api[_-]?key|secret|token|password|passwd|pwd)\s*[:=]\s*[^\s,;]{3,}[^\s,;.)\]]")
+_CREDENTIAL_ASSIGNMENT = re.compile(
+    r"(?i)\b(api[_-]?key|secret|token|password|passwd|pwd)\s*[:=]\s*[^\s,;]{3,}[^\s,;.)\]]"
+)
 
 # --------------------------------------------------------------------------- #
 # Personal data                                                               #
@@ -124,7 +128,9 @@ PROMPT_SIGNATURES = (
     "the default answer is ready",
 )
 # The internal structures the agents exchange. Shown to an engineer they are a leak, not an answer.
-_INTERNAL_JSON = re.compile(r'(?s)^\s*(?:\[\s*)?\{\s*"(?:verdict|candidate_causes|recommended_checks|tool_calls|supported)"\s*:')
+_INTERNAL_JSON = re.compile(
+    r'(?s)^\s*(?:\[\s*)?\{\s*"(?:verdict|candidate_causes|recommended_checks|tool_calls|supported)"\s*:'
+)
 
 
 @dataclass(frozen=True)

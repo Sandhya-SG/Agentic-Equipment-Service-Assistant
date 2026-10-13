@@ -148,7 +148,7 @@ def test_surrounding_whitespace_and_extra_lines_are_tolerated(model):
         "READY",
         "status ready",
         "STATUS READY",
-        "{\"status\": \"READY\"}",
+        '{"status": "READY"}',
         "STATUS: MAYBE\nQUESTION: NONE",
         "STATUS: \nQUESTION: NONE",
     ],
@@ -217,7 +217,7 @@ def test_prompt_keeps_the_safety_priority_and_the_default_to_ready_rules(model):
 def test_a_plain_request_is_not_marked_as_a_clarification_continuation(model):
     """The continuation flag is NO unless a resolved query exists."""
     run()
-    assert 'Clarification continuation:\nNO' in model["calls"][0]["messages"][1]["content"]
+    assert "Clarification continuation:\nNO" in model["calls"][0]["messages"][1]["content"]
 
 
 # --------------------------------------------------------------------------- #
@@ -232,7 +232,7 @@ def test_resolved_query_replaces_the_raw_query_and_marks_a_continuation(model):
     prompt = model["calls"][0]["messages"][1]["content"]
     assert "Original engineer request:\nIt's not working." in prompt
     assert "Engineer clarification:\nThe temperature does not reach the setpoint." in prompt
-    assert 'Clarification continuation:\nYES' in prompt
+    assert "Clarification continuation:\nYES" in prompt
 
 
 def test_follow_up_can_complete_a_clarified_request(model):
@@ -247,7 +247,7 @@ def test_follow_up_with_a_blank_resolved_query_uses_the_raw_query(model):
     run(query="What PPE is required?", resolved_query="")
     prompt = model["calls"][0]["messages"][1]["content"]
     assert "What PPE is required?" in prompt
-    assert 'Clarification continuation:\nNO' in prompt
+    assert "Clarification continuation:\nNO" in prompt
 
 
 def test_resolve_clarification_combines_both_texts_without_adding_information():

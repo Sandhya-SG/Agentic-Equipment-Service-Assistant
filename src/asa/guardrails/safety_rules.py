@@ -70,7 +70,7 @@ HARD_HALT_TRIGGERS: dict[str, list[str]] = {
     "thermal": [
         r"\bhot\s+(?:surfaces?|plates?|chucks?|heads?|chambers?|liquids?|glycol|EGW)\b",
         r"\bburn\s+hazard\b",
-        r"\b\d{3,}\s?°?\s?C\b",           # 3+ digit temperatures
+        r"\b\d{3,}\s?°?\s?C\b",  # 3+ digit temperatures
         r"\bheat(?:er|ing)\s+elements?\b",  # "heater element" and "heating element"
         r"\b(?:still|too)\s+hot\b",
         r"\bwhile\s+(?:it\s+is\s+|it's\s+)?hot\b",
@@ -202,13 +202,15 @@ def check_defeat_request(text: str) -> str | None:
 # Result                                                                      #
 # --------------------------------------------------------------------------- #
 
+
 @dataclass
 class SafetyRuleResult:
     """Outcome of the deterministic safety check."""
+
     forced_halt: bool
     hazards: list[str] = field(default_factory=list)
     ppe_required: list[str] = field(default_factory=list)
-    escalate_only: bool = False          # hazard is not field-serviceable
+    escalate_only: bool = False  # hazard is not field-serviceable
     reasons: list[str] = field(default_factory=list)
 
 
@@ -217,8 +219,7 @@ class SafetyRuleResult:
 # --------------------------------------------------------------------------- #
 
 _COMPILED_TRIGGERS = {
-    hazard: [re.compile(p, re.IGNORECASE) for p in patterns]
-    for hazard, patterns in HARD_HALT_TRIGGERS.items()
+    hazard: [re.compile(p, re.IGNORECASE) for p in patterns] for hazard, patterns in HARD_HALT_TRIGGERS.items()
 }
 
 

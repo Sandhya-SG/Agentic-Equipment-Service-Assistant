@@ -13,12 +13,12 @@ import pytest
 
 from asa.graph.state import Chunk, RankedCause, Step
 
-
 # --------------------------------------------------------------------------- #
 # Import the module without a key, a Chroma index or the embedding model.      #
 # diagnostic.py builds an OpenAI client and an AgenticRAGAgent at import time, #
 # so both are stubbed while loading it under a private name.                   #
 # --------------------------------------------------------------------------- #
+
 
 def _load_diagnostic_module():
     """Load src/asa/agents/diagnostic.py with a stub RAG module and a dummy key."""
@@ -54,6 +54,7 @@ diag = _load_diagnostic_module()
 # Helpers                                                                      #
 # --------------------------------------------------------------------------- #
 
+
 def _chunk_dict(chunk_id, text="Evidence text.", **extra):
     item = {
         "chunk_id": chunk_id,
@@ -88,16 +89,18 @@ def _chunk(chunk_id, text="Evidence text."):
 
 def _response(text):
     """Minimal fake OpenAI response shape."""
-    return SimpleNamespace(
-        choices=[SimpleNamespace(message=SimpleNamespace(content=text))]
-    )
+    return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=text))])
 
 
 def _good_rag(chunks=None, attempts=1):
-    chunks = chunks if chunks is not None else [
-        _chunk_dict("c1", "Heater failure prevents reaching setpoint."),
-        _chunk_dict("c2", "Check the heater fuse and the thermocouple."),
-    ]
+    chunks = (
+        chunks
+        if chunks is not None
+        else [
+            _chunk_dict("c1", "Heater failure prevents reaching setpoint."),
+            _chunk_dict("c2", "Check the heater fuse and the thermocouple."),
+        ]
+    )
     return {
         "retrieval_status": "GOOD",
         "results": chunks,
@@ -178,6 +181,7 @@ DIAGNOSIS = {
 # Happy path and state shape                                                   #
 # --------------------------------------------------------------------------- #
 
+
 def test_good_evidence_returns_full_state_update(monkeypatch):
     """The node must return exactly the documented state keys for a successful diagnosis."""
     _install(monkeypatch, _good_rag(attempts=2), FakeModel(DIAGNOSIS))
@@ -185,9 +189,15 @@ def test_good_evidence_returns_full_state_update(monkeypatch):
     update = diag.diagnostic_node(dict(STATE))
 
     assert set(update) == {
-        "retrieval_strategy", "retrieved_chunks", "sufficiency", "retry_count",
-        "root_causes", "troubleshooting_steps", "escalated",
-        "escalation_reason", "final_answer",
+        "retrieval_strategy",
+        "retrieved_chunks",
+        "sufficiency",
+        "retry_count",
+        "root_causes",
+        "troubleshooting_steps",
+        "escalated",
+        "escalation_reason",
+        "final_answer",
     }
     assert update["retrieval_strategy"] == "hybrid"
     assert update["sufficiency"] is True
@@ -201,8 +211,11 @@ def test_good_evidence_returns_full_state_update(monkeypatch):
 
 def test_retrieved_chunks_map_rrf_score_and_provenance(monkeypatch):
     """RAG result dicts must be converted to Chunk objects with score and citation metadata."""
-    _install(monkeypatch, _good_rag([_chunk_dict("c1", page=7, rrf_score=0.91)]),
-             FakeModel({"candidate_causes": [], "recommended_checks": []}))
+    _install(
+        monkeypatch,
+        _good_rag([_chunk_dict("c1", page=7, rrf_score=0.91)]),
+        FakeModel({"candidate_causes": [], "recommended_checks": []}),
+    )
 
     update = diag.diagnostic_node(dict(STATE))
 
@@ -218,11 +231,13 @@ def test_retrieval_is_requested_for_the_selected_equipment(monkeypatch):
 
     diag.diagnostic_node(dict(STATE))
 
-    assert rag.calls == [{
-        "question": "Temperature cannot reach setpoint",
-        "equipment_model": "thermal_station",
-        "k": 5,
-    }]
+    assert rag.calls == [
+        {
+            "question": "Temperature cannot reach setpoint",
+            "equipment_model": "thermal_station",
+            "k": 5,
+        }
+    ]
 
 
 def test_resolved_query_takes_priority_over_raw_query(monkeypatch):
@@ -237,6 +252,7 @@ def test_resolved_query_takes_priority_over_raw_query(monkeypatch):
 # --------------------------------------------------------------------------- #
 # Ranking, steps, ordering                                                     #
 # --------------------------------------------------------------------------- #
+
 
 def test_causes_carry_likelihood_and_supporting_chunk_ids(monkeypatch):
     """Each retained cause must keep its likelihood and the chunk ids that support it."""
@@ -307,6 +323,7 @@ def test_missing_optional_fields_use_safe_defaults(monkeypatch):
 # Evidence validation                                                          #
 # --------------------------------------------------------------------------- #
 
+
 def test_cause_citing_unknown_chunk_id_is_removed_without_a_model_call(monkeypatch):
     """A cause whose cited chunk ids were not retrieved must be dropped (no invented evidence)."""
     diagnosis = {
@@ -359,8 +376,7 @@ def test_validator_receives_only_the_cited_chunk_text(monkeypatch):
     """Validation must judge a claim against its cited chunks only, not all retrieved text."""
     diagnosis = {
         "candidate_causes": [
-            {"cause": "Heater failure", "likelihood": 0.5,
-             "supporting_chunk_ids": ["c1", "missing"]},
+            {"cause": "Heater failure", "likelihood": 0.5, "supporting_chunk_ids": ["c1", "missing"]},
         ],
         "recommended_checks": [],
     }
@@ -409,10 +425,10 @@ def test_any_verdict_other_than_exactly_supported_removes_the_claim(monkeypatch,
 # Unsupported claims: answer text                                              #
 # --------------------------------------------------------------------------- #
 
+
 def test_answer_lists_only_validated_causes_and_steps(monkeypatch):
     """The engineer-facing answer must not mention a cause or check that validation removed."""
-    _install(monkeypatch, _good_rag(),
-             FakeModel(DIAGNOSIS, reject=("Thermocouple drift", "Check heater fuse")))
+    _install(monkeypatch, _good_rag(), FakeModel(DIAGNOSIS, reject=("Thermocouple drift", "Check heater fuse")))
 
     answer = diag.diagnostic_node(dict(STATE))["final_answer"]
 
@@ -437,9 +453,12 @@ def test_all_claims_removed_gives_not_confirmed_answer_without_escalation(monkey
 
 def test_model_assessment_text_is_never_shown_to_the_engineer(monkeypatch):
     """The free-text assessment from the model must be replaced by the fixed conservative text."""
-    diagnosis = {"assessment": "The heater is definitely broken.",
-                 "root_cause_confirmed": True,
-                 "candidate_causes": [], "recommended_checks": []}
+    diagnosis = {
+        "assessment": "The heater is definitely broken.",
+        "root_cause_confirmed": True,
+        "candidate_causes": [],
+        "recommended_checks": [],
+    }
     _install(monkeypatch, _good_rag(), FakeModel(diagnosis))
 
     answer = diag.diagnostic_node(dict(STATE))["final_answer"]
@@ -461,6 +480,7 @@ def test_empty_model_lists_yield_empty_results(monkeypatch):
 # --------------------------------------------------------------------------- #
 # Escalation                                                                   #
 # --------------------------------------------------------------------------- #
+
 
 def test_insufficient_evidence_escalates_with_rag_reason_and_skips_the_model(monkeypatch):
     """Non-GOOD retrieval must escalate with the RAG reason and never call the model."""
@@ -488,8 +508,7 @@ def test_insufficient_evidence_escalates_with_rag_reason_and_skips_the_model(mon
 
 def test_escalation_uses_default_reason_when_rag_gives_none(monkeypatch):
     """A missing or empty senior_reason must fall back to the default insufficiency reason."""
-    rag_result = {"retrieval_status": "POOR", "results": [],
-                  "retrieval_attempts": 0, "senior_reason": ""}
+    rag_result = {"retrieval_status": "POOR", "results": [], "retrieval_attempts": 0, "senior_reason": ""}
     _install(monkeypatch, rag_result, FakeModel(DIAGNOSIS))
 
     update = diag.diagnostic_node(dict(STATE))
@@ -502,6 +521,7 @@ def test_escalation_uses_default_reason_when_rag_gives_none(monkeypatch):
 # --------------------------------------------------------------------------- #
 # Input guards, malformed output, safety                                       #
 # --------------------------------------------------------------------------- #
+
 
 def test_missing_query_raises_before_any_retrieval(monkeypatch):
     """An empty query must be rejected without touching retrieval or the model."""
@@ -525,7 +545,7 @@ def test_missing_equipment_model_raises_before_any_retrieval(monkeypatch):
 
 @pytest.mark.parametrize(
     "reply",
-    ["{not json", "", "   ", "[]", "null", "42", '"a string"', "[{\"cause\": \"x\"}]", "Sure! Here is the diagnosis."],
+    ["{not json", "", "   ", "[]", "null", "42", '"a string"', '[{"cause": "x"}]', "Sure! Here is the diagnosis."],
 )
 def test_an_unreadable_diagnosis_escalates_instead_of_failing_the_request(monkeypatch, reply):
     """A malformed or non-object model reply must end in an escalation with no causes and no steps."""
@@ -552,8 +572,15 @@ def test_an_unreadable_diagnosis_keeps_the_retrieved_evidence_and_counts(monkeyp
     assert update["sufficiency"] is True
     assert update["retrieval_strategy"] == "hybrid"
     assert set(update) == {
-        "retrieval_strategy", "retrieved_chunks", "sufficiency", "retry_count",
-        "root_causes", "troubleshooting_steps", "escalated", "escalation_reason", "final_answer",
+        "retrieval_strategy",
+        "retrieved_chunks",
+        "sufficiency",
+        "retry_count",
+        "root_causes",
+        "troubleshooting_steps",
+        "escalated",
+        "escalation_reason",
+        "final_answer",
     }
 
 
@@ -619,7 +646,9 @@ def test_a_validator_reply_with_no_content_drops_the_claim(monkeypatch):
     """If the validator returns no content the claim is not SUPPORTED, so it is removed (fail closed)."""
     monkeypatch.setattr(diag, "rag_agent", FakeRag(_good_rag()))
     monkeypatch.setattr(
-        diag.client.chat.completions, "create", _none_content_model(validator_reply=None, generation=json.dumps(DIAGNOSIS))
+        diag.client.chat.completions,
+        "create",
+        _none_content_model(validator_reply=None, generation=json.dumps(DIAGNOSIS)),
     )
 
     update = diag.diagnostic_node(dict(STATE))
@@ -702,14 +731,17 @@ def test_wrongly_typed_lists_yield_an_empty_but_valid_diagnosis(monkeypatch, dia
 
 def test_step_has_no_executable_or_actuator_field(monkeypatch):
     """Steps are advice only: the type has no command field and extra model keys are ignored."""
-    assert {f.name for f in fields(Step)} == {
-        "order", "action", "supporting_chunk_ids", "hazard_flag"}
+    assert {f.name for f in fields(Step)} == {"order", "action", "supporting_chunk_ids", "hazard_flag"}
     diagnosis = {
         "candidate_causes": [],
-        "recommended_checks": [{
-            "action": "Check fuse", "supporting_chunk_ids": ["c2"],
-            "command": "set_heater(0)", "execute": True,
-        }],
+        "recommended_checks": [
+            {
+                "action": "Check fuse",
+                "supporting_chunk_ids": ["c2"],
+                "command": "set_heater(0)",
+                "execute": True,
+            }
+        ],
     }
     _install(monkeypatch, _good_rag(), FakeModel(diagnosis))
 
@@ -722,10 +754,12 @@ def test_hazard_flag_is_passed_through_not_inferred_by_the_node(monkeypatch):
     """Hazard classification belongs to the Safety agent: the node only relays the model flag."""
     diagnosis = {
         "candidate_causes": [],
-        "recommended_checks": [{
-            "action": "Open the live high-voltage cabinet and measure",
-            "supporting_chunk_ids": ["c2"],
-        }],
+        "recommended_checks": [
+            {
+                "action": "Open the live high-voltage cabinet and measure",
+                "supporting_chunk_ids": ["c2"],
+            }
+        ],
     }
     _install(monkeypatch, _good_rag(), FakeModel(diagnosis))
 

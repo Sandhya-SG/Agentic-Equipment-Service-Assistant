@@ -303,9 +303,7 @@ def test_assessment_with_empty_content_or_no_choices_escalates(monkeypatch):
     _stub_search(monkeypatch)
     monkeypatch.setattr(safety.client.chat.completions, "create", lambda **kw: _response(None))
     _assert_cautious_escalation(safety.safety_node(dict(STATE)))
-    monkeypatch.setattr(
-        safety.client.chat.completions, "create", lambda **kw: SimpleNamespace(choices=[])
-    )
+    monkeypatch.setattr(safety.client.chat.completions, "create", lambda **kw: SimpleNamespace(choices=[]))
     _assert_cautious_escalation(safety.safety_node(dict(STATE)))
 
 
@@ -647,9 +645,7 @@ def test_a_model_halt_for_a_hazardous_request_stays_a_halt(monkeypatch, question
 @pytest.mark.parametrize("model_verdict", ["allow", "escalate", "halt", "garbage", None])
 def test_the_rules_never_turn_a_halt_or_an_escalation_into_an_allow(monkeypatch, question, model_verdict):
     """For any model verdict, a hazardous or defeat request never ends as ALLOW."""
-    result, _ = _run(
-        monkeypatch, _assessment(model_verdict, [HAZARD]), {HAZARD: ["c_power"]}, state=_state(question)
-    )
+    result, _ = _run(monkeypatch, _assessment(model_verdict, [HAZARD]), {HAZARD: ["c_power"]}, state=_state(question))
     assert result["safety_verdict"] in {"halt", "escalate"}
 
 
@@ -780,7 +776,11 @@ def test_every_claim_points_at_a_passage_that_was_actually_retrieved(monkeypatch
     for claim in result["safety_claims"]:
         assert claim.supporting_chunk_ids, claim
         assert set(claim.supporting_chunk_ids) <= retrieved
-    listed = set(result["hazards"]) | set(result["ppe_required"]) | {c.text for c in result["safety_claims"] if c.category == "control"}
+    listed = (
+        set(result["hazards"])
+        | set(result["ppe_required"])
+        | {c.text for c in result["safety_claims"] if c.category == "control"}
+    )
     assert {claim.text for claim in result["safety_claims"]} == listed
 
 

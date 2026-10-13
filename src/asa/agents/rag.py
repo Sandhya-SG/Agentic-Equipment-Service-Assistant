@@ -25,6 +25,7 @@ from asa.ingestion.retrieval import AEMHybridRetriever
 
 logger = logging.getLogger(__name__)
 
+
 def _chunk_refs(chunks: list[Chunk]) -> list[dict[str, Any]]:
     return [
         {

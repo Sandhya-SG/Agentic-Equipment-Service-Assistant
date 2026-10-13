@@ -85,7 +85,10 @@ def test_each_planning_pass_counts_an_iteration(model):
 
 def test_the_resolved_query_is_routed_after_a_clarification(model):
     """After clarification the combined request is what gets routed, not the last short reply."""
-    plan(query="The pump is noisy.", resolved_query="Original engineer request:\nIt's broken.\n\nEngineer clarification:\nThe pump is noisy.")
+    plan(
+        query="The pump is noisy.",
+        resolved_query="Original engineer request:\nIt's broken.\n\nEngineer clarification:\nThe pump is noisy.",
+    )
     prompt = model["calls"][0]["messages"][1]["content"]
     assert "Original engineer request:\nIt's broken." in prompt
 
@@ -215,7 +218,9 @@ def test_clarify_request_ends_the_run_for_the_application_to_ask():
     assert route_after_request({"request_status": "CLARIFY"}) == "clarify"
 
 
-@pytest.mark.parametrize("state", [{}, {"request_status": None}, {"request_status": "ready"}, {"request_status": "DONE"}])
+@pytest.mark.parametrize(
+    "state", [{}, {"request_status": None}, {"request_status": "ready"}, {"request_status": "DONE"}]
+)
 def test_unexpected_request_status_fails_conservatively_to_clarify(state):
     """An unknown status never proceeds to planning."""
     assert route_after_request(state) == "clarify"
@@ -232,7 +237,10 @@ def test_each_specialist_is_routed_to_itself(step):
     assert route_after_planning({"current_step": step}) == step
 
 
-@pytest.mark.parametrize("state", [{}, {"current_step": None}, {"current_step": ""}, {"current_step": "rag"}, {"current_step": "AGENTIC_RAG"}])
+@pytest.mark.parametrize(
+    "state",
+    [{}, {"current_step": None}, {"current_step": ""}, {"current_step": "rag"}, {"current_step": "AGENTIC_RAG"}],
+)
 def test_unknown_step_falls_back_to_safety_not_an_arbitrary_specialist(state):
     """Planning output the graph does not recognise goes to the cautious specialist."""
     assert route_after_planning(state) == "safety"

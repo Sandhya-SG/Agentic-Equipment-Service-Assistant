@@ -183,7 +183,9 @@ def _summary() -> dict:
         "relevancy_rate": round(sum(c["relevant"] for c in cases.values()) / n, 3),
         "relevancy_target": RELEVANCY_TARGET,
         "strict_rate": round(sum(c["passed"] for c in cases.values()) / n, 3),
-        "mean_scores": {name: round(statistics.mean(c["scores"][name] for c in cases.values()), 3) for name in THRESHOLDS},
+        "mean_scores": {
+            name: round(statistics.mean(c["scores"][name] for c in cases.values()), 3) for name in THRESHOLDS
+        },
         "mean_judge_spread": round(statistics.mean(spreads), 3),
         "max_judge_spread": round(max(spreads), 3),
         # Kept so the report and older tooling can still read the single rate and the target.
@@ -196,7 +198,9 @@ def test_zz_grounding_rate_meets_the_prd_target():
     if not SCORES["cases"]:
         pytest.skip("no gradable answers were scored in this session")
     SCORES["summary"] = summary = _summary()
-    assert not SCORES["errors"], f"{len(SCORES['errors'])} answers could not be scored, so the rate is not valid: {SCORES['errors']}"
+    assert not SCORES["errors"], (
+        f"{len(SCORES['errors'])} answers could not be scored, so the rate is not valid: {SCORES['errors']}"
+    )
     assert summary["grounding_rate"] >= GROUNDING_TARGET, (
         f"grounding rate {summary['grounding_rate']:.1%} is below the {GROUNDING_TARGET:.0%} target: {summary}"
     )

@@ -46,14 +46,18 @@ def evaluate(cases: list[dict], guard=None) -> dict:
     with_findings = [case for case in cases if "expect_findings" in case]
 
     caught = [case for case in must_act if results[case["id"]].action == case["expect_action"]]
-    touched = [case for case in clean if results[case["id"]].action != "none" or results[case["id"]].text != case["answer"]]
+    touched = [
+        case for case in clean if results[case["id"]].action != "none" or results[case["id"]].text != case["answer"]
+    ]
     leak_free = [
         case
         for case in with_strings
         if not any(text.lower() in results[case["id"]].text.lower() for text in case["must_not_contain"])
     ]
     action_ok = [case for case in cases if results[case["id"]].action == case["expect_action"]]
-    findings_ok = [case for case in with_findings if sorted(results[case["id"]].findings) == sorted(case["expect_findings"])]
+    findings_ok = [
+        case for case in with_findings if sorted(results[case["id"]].findings) == sorted(case["expect_findings"])
+    ]
 
     return {
         "cases_total": len(cases),

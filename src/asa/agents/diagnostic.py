@@ -19,13 +19,10 @@ from asa.graph.state import (
     Step,
 )
 
-
 load_dotenv()
 
 
-client = OpenAI(
-    api_key=os.getenv("OPENAI_API_KEY")
-)
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 DIAGNOSTIC_MODEL = "gpt-4o-mini"
 
@@ -84,13 +81,9 @@ def _unusable_reply_escalation(
         "troubleshooting_steps": [],
         "escalated": True,
         "escalation_reason": (
-            "The diagnostic model returned a reply that could not be read, "
-            "so no grounded diagnosis could be produced."
+            "The diagnostic model returned a reply that could not be read, so no grounded diagnosis could be produced."
         ),
-        "final_answer": (
-            "A document-grounded diagnosis could not be produced reliably. "
-            "Human escalation is required."
-        ),
+        "final_answer": ("A document-grounded diagnosis could not be produced reliably. Human escalation is required."),
     }
 
 
@@ -107,7 +100,6 @@ def _format_diagnostic_context(
         chunks,
         start=1,
     ):
-
         parts.append(
             f"[EVIDENCE {rank}]\n"
             f"Chunk ID: {chunk.chunk_id}\n"
@@ -119,6 +111,7 @@ def _format_diagnostic_context(
         )
 
     return "\n".join(parts)
+
 
 def _validate_diagnostic_claims(
     question: str,
@@ -133,29 +126,17 @@ def _validate_diagnostic_claims(
     Unsupported claims are removed.
     """
 
-    chunk_map = {
-        chunk.chunk_id: chunk
-        for chunk in chunks
-    }
+    chunk_map = {chunk.chunk_id: chunk for chunk in chunks}
 
     valid_causes = []
 
     for cause in candidate_causes:
-
-        evidence = [
-            chunk_map[chunk_id]
-            for chunk_id
-            in cause.supporting_chunk_ids
-            if chunk_id in chunk_map
-        ]
+        evidence = [chunk_map[chunk_id] for chunk_id in cause.supporting_chunk_ids if chunk_id in chunk_map]
 
         if not evidence:
             continue
 
-        evidence_text = "\n\n".join(
-            chunk.text
-            for chunk in evidence
-        )
+        evidence_text = "\n\n".join(chunk.text for chunk in evidence)
 
         prompt = f"""
 You are validating one candidate diagnostic cause
@@ -199,10 +180,7 @@ UNSUPPORTED
             messages=[
                 {
                     "role": "system",
-                    "content": (
-                        "You validate diagnostic claims "
-                        "strictly against cited manual evidence."
-                    ),
+                    "content": ("You validate diagnostic claims strictly against cited manual evidence."),
                 },
                 {
                     "role": "user",
@@ -216,28 +194,17 @@ UNSUPPORTED
         verdict = _reply_text(response).upper()
 
         if verdict == "SUPPORTED":
-            valid_causes.append(
-                cause
-            )
+            valid_causes.append(cause)
 
     valid_steps = []
 
     for step in troubleshooting_steps:
-
-        evidence = [
-            chunk_map[chunk_id]
-            for chunk_id
-            in step.supporting_chunk_ids
-            if chunk_id in chunk_map
-        ]
+        evidence = [chunk_map[chunk_id] for chunk_id in step.supporting_chunk_ids if chunk_id in chunk_map]
 
         if not evidence:
             continue
 
-        evidence_text = "\n\n".join(
-            chunk.text
-            for chunk in evidence
-        )
+        evidence_text = "\n\n".join(chunk.text for chunk in evidence)
 
         prompt = f"""
 You are validating one recommended diagnostic check
@@ -279,10 +246,7 @@ UNSUPPORTED
             messages=[
                 {
                     "role": "system",
-                    "content": (
-                        "You validate troubleshooting actions "
-                        "strictly against cited manual evidence."
-                    ),
+                    "content": ("You validate troubleshooting actions strictly against cited manual evidence."),
                 },
                 {
                     "role": "user",
@@ -296,9 +260,7 @@ UNSUPPORTED
         verdict = _reply_text(response).upper()
 
         if verdict == "SUPPORTED":
-            valid_steps.append(
-                step
-            )
+            valid_steps.append(step)
 
     return (
         valid_causes,
@@ -316,31 +278,17 @@ def diagnostic_node(
 
     print("\n[Diagnostic Agent]")
 
-    question = (
-        state.get("resolved_query")
-        or state.get("raw_query")
-        or ""
-    ).strip()
+    question = (state.get("resolved_query") or state.get("raw_query") or "").strip()
 
-    equipment_model = (
-        state.get("equipment_model")
-        or ""
-    ).strip()
+    equipment_model = (state.get("equipment_model") or "").strip()
 
     if not question:
-        raise ValueError(
-            "Diagnostic Agent requires a query."
-        )
+        raise ValueError("Diagnostic Agent requires a query.")
 
     if not equipment_model:
-        raise ValueError(
-            "Diagnostic Agent requires equipment_model."
-        )
+        raise ValueError("Diagnostic Agent requires equipment_model.")
 
-    print(
-        "Diagnostic Agent requesting "
-        "documented evidence..."
-    )
+    print("Diagnostic Agent requesting documented evidence...")
 
     # --------------------------------------------------
     # Use the proven Agentic RAG evidence gate
@@ -372,70 +320,38 @@ def diagnostic_node(
     # RAG could not establish sufficient evidence
     # --------------------------------------------------
 
-    if (
-        rag_result["retrieval_status"]
-        != "GOOD"
-    ):
-
-        reason = (
-            rag_result.get("senior_reason")
-            or (
-                "The available AEM documentation "
-                "does not provide sufficient evidence "
-                "for a grounded diagnostic assessment."
-            )
+    if rag_result["retrieval_status"] != "GOOD":
+        reason = rag_result.get("senior_reason") or (
+            "The available AEM documentation does not provide sufficient evidence for a grounded diagnostic assessment."
         )
 
-        print(
-            "Diagnostic evidence insufficient."
-        )
+        print("Diagnostic evidence insufficient.")
 
         return {
-            "retrieval_strategy":
-                "hybrid",
-
-            "retrieved_chunks":
-                retrieved_chunks,
-
-            "sufficiency":
-                False,
-
-            "retry_count":
-                max(
-                    rag_result[
-                        "retrieval_attempts"
-                    ] - 1,
-                    0,
-                ),
-
-            "root_causes":
-                [],
-
-            "troubleshooting_steps":
-                [],
-
-            "escalated":
-                True,
-
-            "escalation_reason":
-                reason,
-
-            "final_answer":
-                (
-                    "A document-grounded diagnosis "
-                    "cannot be made from the available "
-                    "AEM manual evidence. "
-                    "Human escalation is required."
-                ),
+            "retrieval_strategy": "hybrid",
+            "retrieved_chunks": retrieved_chunks,
+            "sufficiency": False,
+            "retry_count": max(
+                rag_result["retrieval_attempts"] - 1,
+                0,
+            ),
+            "root_causes": [],
+            "troubleshooting_steps": [],
+            "escalated": True,
+            "escalation_reason": reason,
+            "final_answer": (
+                "A document-grounded diagnosis "
+                "cannot be made from the available "
+                "AEM manual evidence. "
+                "Human escalation is required."
+            ),
         }
 
     # --------------------------------------------------
     # Evidence is sufficient
     # --------------------------------------------------
 
-    context = _format_diagnostic_context(
-        retrieved_chunks
-    )
+    context = _format_diagnostic_context(retrieved_chunks)
 
     prompt = f"""
 You are the Diagnostic Agent for an AEM
@@ -586,23 +502,16 @@ do not include that check.
             },
         ],
         temperature=0,
-        response_format={
-            "type": "json_object"
-        },
+        response_format={"type": "json_object"},
     )
 
     try:
-        diagnostic = json.loads(
-            _reply_text(response)
-        )
+        diagnostic = json.loads(_reply_text(response))
     except ValueError:
         diagnostic = None
 
     if not isinstance(diagnostic, dict):
-        print(
-            "Diagnostic reply could not be read; "
-            "escalating."
-        )
+        print("Diagnostic reply could not be read; escalating.")
         return _unusable_reply_escalation(
             retrieved_chunks,
             rag_result,
@@ -614,13 +523,8 @@ do not include that check.
 
     root_causes = []
 
-    for item in _items(
-        diagnostic.get("candidate_causes")
-    ):
-
-        cause_text = str(
-            item.get("cause", "")
-        ).strip()
+    for item in _items(diagnostic.get("candidate_causes")):
+        cause_text = str(item.get("cause", "")).strip()
 
         # An empty cause is not a claim to validate.
         if not cause_text:
@@ -629,14 +533,8 @@ do not include that check.
         root_causes.append(
             RankedCause(
                 cause=cause_text,
-
-                likelihood=_likelihood(
-                    item.get("likelihood", 0.0)
-                ),
-
-                supporting_chunk_ids=_chunk_ids(
-                    item.get("supporting_chunk_ids")
-                ),
+                likelihood=_likelihood(item.get("likelihood", 0.0)),
+                supporting_chunk_ids=_chunk_ids(item.get("supporting_chunk_ids")),
             )
         )
 
@@ -645,9 +543,7 @@ do not include that check.
             str(item.get("action", "")).strip(),
             item,
         )
-        for item in _items(
-            diagnostic.get("recommended_checks")
-        )
+        for item in _items(diagnostic.get("recommended_checks"))
     ]
 
     troubleshooting_steps = []
@@ -656,17 +552,11 @@ do not include that check.
         [check for check in checks if check[0]],
         start=1,
     ):
-
         troubleshooting_steps.append(
             Step(
                 order=order,
-
                 action=action,
-
-                supporting_chunk_ids=_chunk_ids(
-                    item.get("supporting_chunk_ids")
-                ),
-
+                supporting_chunk_ids=_chunk_ids(item.get("supporting_chunk_ids")),
                 hazard_flag=bool(
                     item.get(
                         "hazard_flag",
@@ -680,18 +570,13 @@ do not include that check.
     # Validate diagnostic claims against cited evidence
     # --------------------------------------------------
 
-    print(
-        "\n[Diagnostic Grounding Validation]"
-    )
+    print("\n[Diagnostic Grounding Validation]")
 
-    root_causes, troubleshooting_steps = (
-        _validate_diagnostic_claims(
-            question=question,
-            chunks=retrieved_chunks,
-            candidate_causes=root_causes,
-            troubleshooting_steps=
-                troubleshooting_steps,
-        )
+    root_causes, troubleshooting_steps = _validate_diagnostic_claims(
+        question=question,
+        chunks=retrieved_chunks,
+        candidate_causes=root_causes,
+        troubleshooting_steps=troubleshooting_steps,
     )
 
     # --------------------------------------------------
@@ -699,7 +584,6 @@ do not include that check.
     # --------------------------------------------------
 
     if root_causes:
-
         assessment = (
             "The root cause is not confirmed. "
             "The AEM manual identifies documented conditions "
@@ -708,7 +592,6 @@ do not include that check.
         )
 
     else:
-
         assessment = (
             "The root cause is not confirmed from the "
             "available AEM manual evidence. The retrieved "
@@ -726,70 +609,36 @@ do not include that check.
     ]
 
     if root_causes:
-
-        answer_parts.append(
-            "\nDocumented candidate conditions:"
-        )
+        answer_parts.append("\nDocumented candidate conditions:")
 
         for rank, cause in enumerate(
             root_causes,
             start=1,
         ):
-
-            answer_parts.append(
-                f"{rank}. {cause.cause}"
-            )
+            answer_parts.append(f"{rank}. {cause.cause}")
 
     if troubleshooting_steps:
-
-        answer_parts.append(
-            "\nRecommended documented checks:"
-        )
+        answer_parts.append("\nRecommended documented checks:")
 
         for step in troubleshooting_steps:
+            answer_parts.append(f"{step.order}. {step.action}")
 
-            answer_parts.append(
-                f"{step.order}. "
-                f"{step.action}"
-            )
-
-    answer = "\n".join(
-        answer_parts
-    )
+    answer = "\n".join(answer_parts)
 
     print("\nDiagnostic result:")
     print(answer)
 
     return {
-        "retrieval_strategy":
-            "hybrid",
-
-        "retrieved_chunks":
-            retrieved_chunks,
-
-        "sufficiency":
-            True,
-
-        "retry_count":
-            max(
-                rag_result[
-                    "retrieval_attempts"
-                ] - 1,
-                0,
-            ),
-
-        "root_causes":
-            root_causes,
-
-        "troubleshooting_steps":
-            troubleshooting_steps,
-
-        "escalated":
-            False,
-
-        "escalation_reason":
-            "",
-
-        "final_answer":
-            answer,
+        "retrieval_strategy": "hybrid",
+        "retrieved_chunks": retrieved_chunks,
+        "sufficiency": True,
+        "retry_count": max(
+            rag_result["retrieval_attempts"] - 1,
+            0,
+        ),
+        "root_causes": root_causes,
+        "troubleshooting_steps": troubleshooting_steps,
+        "escalated": False,
+        "escalation_reason": "",
+        "final_answer": answer,
     }

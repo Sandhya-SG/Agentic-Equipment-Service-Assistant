@@ -80,7 +80,9 @@ def print_report(report: dict, rows: list[dict]) -> None:
         print(f"  known gap: {item['text']!r} ({item['note']})")
 
     output = report["output_guard"]
-    print(f"\nresponse firewall: {output['must_act_total']} answers that must be cleaned or withheld, {output['clean_total']} clean ones")
+    print(
+        f"\nresponse firewall: {output['must_act_total']} answers that must be cleaned or withheld, {output['clean_total']} clean ones"
+    )
     for item in output["missed"]:
         print(f"  not acted on ({item['id']}): expected {item['expected']}, got {item['got']}")
     for item in output["false_actions"]:
