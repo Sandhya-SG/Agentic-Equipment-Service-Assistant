@@ -56,8 +56,8 @@ tests:
         value: file://asserts.js:citesManual
         config: { min: 0 }
 
-  # Over-asking: short but clear questions that the Request agent should let through. These two are asked for
-  # clarification today ("What specific procedure ... for draining the EGW line?"), a finding about the first agent.
+  # Over-asking: short but clear questions that the Request agent should let through. Both used to be sent back for
+  # clarification ("What specific procedure ... for draining the EGW line?"); fixed on main, kept as regression checks.
   - description: request - over-ask check, a short draining question should not be sent back for clarification
     vars: { message: 'How do I safely drain the EGW line?', equipment_model: thermal_station }
     assert:
