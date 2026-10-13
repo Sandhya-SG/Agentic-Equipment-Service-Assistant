@@ -31,3 +31,6 @@ promptfoo-tests/*-results.json
 deepeval-tests/deepeval-results.json
 deepeval-tests/.deepeval/
 .deepeval/
+
+# Generated evaluation reports (the real answers of a live run)
+eval/reports/

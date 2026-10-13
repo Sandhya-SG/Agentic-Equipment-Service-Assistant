@@ -6,6 +6,15 @@
     "false_positive_rate": {"max": 0.05},
     "block_rate_all": {"min": 0.8}
   },
+  "explanation": {
+    "quote_exactness": {"min": 1.0},
+    "citation_provenance": {"min": 1.0},
+    "level_consistency": {"min": 1.0},
+    "counts_consistent": {"min": 1.0},
+    "non_mutation": {"min": 1.0},
+    "deterministic": {"min": 1.0},
+    "expectation_pass_rate": {"min": 1.0}
+  },
   "output_guard": {
     "catch_rate": {"min": 1.0},
     "false_action_rate": {"max": 0.0},

@@ -394,3 +394,240 @@ def test_the_thresholds_cover_the_firewall():
     assert targets["output_guard"]["catch_rate"]["min"] == 1.0
     assert targets["output_guard"]["false_action_rate"]["max"] == 0.0
     assert targets["output_guard"]["leak_free_rate"]["min"] == 1.0
+
+
+# ---------------------------------------------------------------------------
+# Explainability evaluation
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def explanation_eval():
+    return _load("explanation_eval")
+
+
+def test_explanation_dataset_is_well_formed(explanation_eval):
+    cases = explanation_eval.load_cases()
+    ids = [case["id"] for case in cases]
+    assert len(ids) == len(set(ids))
+    for case in cases:
+        assert case["status"] in {"ok", "escalated", "halted", "clarification", "blocked", "unavailable"}, case["id"]
+        assert case["expect"], case["id"]
+        assert isinstance(case["state"].get("retrieved_chunks"), list), case["id"]
+        for chunk in case["state"]["retrieved_chunks"]:
+            assert {"chunk_id", "source_file", "page", "section_title", "text"} <= set(chunk), case["id"]
+        if case.get("known_gap"):
+            assert case.get("note"), f"{case['id']}: a known gap must say why it is a gap"
+
+
+def test_explanation_dataset_covers_every_rule_of_the_layer(explanation_eval):
+    cases = explanation_eval.load_cases()
+    expects = [case["expect"] for case in cases]
+    assert any(e.get("none") is True for e in expects), "statuses with no explanation"
+    assert any("note_contains" in e for e in expects), "contradictions"
+    assert any("max_citations" in e for e in expects), "the citation limit"
+    assert any("decision_verdict" in e for e in expects), "a halted answer"
+    assert sum(1 for case in cases if case["state"].get("retry_count")) >= 1, "the retry penalty"
+    assert {case["status"] for case in cases} >= {
+        "ok",
+        "escalated",
+        "halted",
+        "clarification",
+        "blocked",
+        "unavailable",
+    }
+    assert sum(1 for case in cases if case.get("known_gap")) >= 4, "near-miss claims keep the numbers honest"
+
+
+def test_explanation_metrics_with_a_stub_layer(explanation_eval):
+    """A layer that invents a quote, cites an unretrieved page and mutates its input must be caught."""
+    cases = [
+        {
+            "id": "s1",
+            "description": "one passage",
+            "status": "ok",
+            "state": {
+                "final_answer": "x",
+                "retrieved_chunks": [
+                    {
+                        "chunk_id": "c1",
+                        "doc_id": "d",
+                        "section_id": "1",
+                        "revision": "0",
+                        "equipment_model": "m",
+                        "text": "The real sentence.",
+                        "score": 0.1,
+                        "source_file": "f.pdf",
+                        "page": 3,
+                        "section_title": "T",
+                    }
+                ],
+            },
+            "expect": {"verified": "all"},
+        }
+    ]
+
+    def bad_layer(state, status):
+        state["final_answer"] = "changed"  # mutates its input
+        return {
+            "confidence": 0.9,
+            "confidence_level": "low",  # does not match the band
+            "claims_checked": 1,
+            "claims_verified": 2,  # more than checked
+            "citations": [{"chunk_id": "c1", "quote": "An invented quote.", "page": 9, "source_file": "f.pdf"}],
+        }
+
+    report = explanation_eval.evaluate(cases, explain=bad_layer)
+    assert report["quote_exactness"] == 0.0
+    assert report["citation_provenance"] == 0.0
+    assert report["level_consistency"] == 0.0
+    assert report["counts_consistent"] == 0.0
+    assert report["non_mutation"] == 0.0
+    assert report["expectation_pass_rate"] == 0.0 and report["failures"]
+
+
+def test_the_real_explanation_layer_keeps_every_invariant(explanation_eval):
+    report = explanation_eval.evaluate(explanation_eval.load_cases())
+    for name in (
+        "quote_exactness",
+        "citation_provenance",
+        "level_consistency",
+        "counts_consistent",
+        "serializable",
+        "non_mutation",
+        "deterministic",
+    ):
+        assert report[name] == 1.0, name
+    assert report["expectation_pass_rate"] == 1.0, report["failures"]
+
+
+def test_the_known_gaps_of_the_verifier_are_still_open(explanation_eval):
+    """Near-miss claims (wording close to the manual, meaning different) are still verified. When the verifier is
+    strengthened and one of these is caught, remove its known_gap flag so the numbers stay accurate."""
+    report = explanation_eval.evaluate(explanation_eval.load_cases())
+    assert report["known_gaps_total"] >= 4
+    assert report["known_gaps_open"] == report["known_gaps_total"], (
+        "a known gap is now closed: " + str([g for g in explanation_eval.load_cases() if g.get("known_gap")])[:0]
+    )
+    assert report["false_verification_rate"] == 1.0
+
+
+# --- the corruptions used on real answers ---
+
+ANSWER = (
+    "Personnel must shut off the EGW inlet valve at customer's facilities, cutting off incoming EGW sources before "
+    "draining EGW hoses. [Source: aem_thermal_station.pdf, page 28, section 2.5.4 Draining of EGW Line]"
+)
+
+
+def test_mutations_produce_the_four_corruptions(explanation_eval):
+    out = explanation_eval.mutations(ANSWER)
+    assert set(out) == {"invented_claim", "number_changed", "negation_inserted", "entity_swapped"}
+    assert "45 Nm" in out["invented_claim"] and out["invented_claim"].count("[Source:") == 2
+    assert "must not shut off" in out["negation_inserted"]
+    assert "air inlet valve" in out["entity_swapped"]
+    assert out["number_changed"] is None or out["number_changed"] != ANSWER
+
+
+def test_mutations_do_not_touch_the_page_number_in_the_marker(explanation_eval):
+    out = explanation_eval.mutations(
+        "Keep the door closed. [Source: aem_thermal_station.pdf, page 28, section 2.5.2 X]"
+    )
+    assert out["number_changed"] is None  # the only digits are the page number
+
+
+def test_mutations_return_none_when_there_is_nothing_to_corrupt(explanation_eval):
+    out = explanation_eval.mutations("An answer with no citation marker and no digits.")
+    assert all(value is None for value in out.values())
+
+
+def _record(explanation_eval, answer=ANSWER):
+    cases = {c["id"]: c for c in explanation_eval.load_cases()}
+    state = explanation_eval._to_state(cases["exp-01"]["state"])
+    state["final_answer"] = answer
+    return {"id": "q1", "state": state, "status": "ok"}
+
+
+def test_live_evaluation_detects_an_invented_claim_and_a_negation(explanation_eval):
+    report = explanation_eval.evaluate_live_records([_record(explanation_eval)])
+    assert report["explained"] == 1 and report["with_a_citation_rate"] == 1.0
+    assert report["answer_level_detection"]["invented_claim"] == {"rate": 1.0, "tested": 1}
+    assert report["answer_level_detection"]["negation_inserted"] == {"rate": 1.0, "tested": 1}
+
+
+def test_live_evaluation_reports_the_known_weak_spot_honestly(explanation_eval):
+    """Swapping EGW for air is a near miss that the matcher accepts: the report must say so, not hide it."""
+    report = explanation_eval.evaluate_live_records([_record(explanation_eval)])
+    assert report["answer_level_detection"]["entity_swapped"] == {"rate": 0.0, "tested": 1}
+
+
+def test_live_evaluation_skips_answers_with_no_explanation(explanation_eval):
+    record = _record(explanation_eval)
+    record["status"] = "clarification"
+    report = explanation_eval.evaluate_live_records([record])
+    assert report["explained"] == 0 and report["rows"][0]["explained"] is False
+
+
+def test_the_explanation_targets_are_in_the_thresholds_file():
+    targets = json.loads((EVAL_DIR / "thresholds.json").read_text(encoding="utf-8"))["explanation"]
+    for name in (
+        "quote_exactness",
+        "citation_provenance",
+        "level_consistency",
+        "counts_consistent",
+        "non_mutation",
+        "deterministic",
+        "expectation_pass_rate",
+    ):
+        assert targets[name]["min"] == 1.0
+
+
+def test_the_runner_reports_the_explanation_suite(real_report):
+    assert "explanation" in real_report
+    assert real_report["explanation"]["expectation_pass_rate"] == 1.0
+
+
+def test_number_corruption_changes_quantities_but_not_list_numbers_or_markers(explanation_eval):
+    answer = (
+        "1. Wait 5 minutes before opening the panel. [Source: aem_thermal_station.pdf, page 30, section 2.6.1 X]\n"
+        "2. Keep the pressure at 7 Bar. [Source: aem_thermal_station.pdf, page 31, section 2.6.2 Y]"
+    )
+    changed = explanation_eval.mutations(answer)["number_changed"]
+    assert "1. Wait 12 minutes" in changed and "2. Keep the pressure at 14 Bar" in changed
+    assert "page 30, section 2.6.1" in changed and "page 31, section 2.6.2" in changed
+
+
+def test_negation_corruption_reaches_every_modal_verb_outside_the_markers(explanation_eval):
+    answer = "Personnel must wear gloves and should close the valve. [Source: f.pdf, page 1, section can be 2]"
+    changed = explanation_eval.mutations(answer)["negation_inserted"]
+    assert "must not wear" in changed and "should not close" in changed
+    assert "section can be 2" in changed  # the marker is untouched
+
+
+def test_claim_level_detection_corrupts_only_verified_claims_one_at_a_time(explanation_eval):
+    report = explanation_eval.evaluate_live_records([_record(explanation_eval)])
+    claim = report["claim_level_detection"]
+    assert claim["negation_inserted"] == {"rate": 1.0, "tested": 1}  # a flipped instruction is caught
+    assert claim["entity_swapped"] == {"rate": 0.0, "tested": 1}  # EGW -> air is still verified: a known weak spot
+    assert "number_changed" not in claim  # the sentence has no quantity to change
+    assert report["rows"][0]["claim_level"]["negation_inserted"] == [True]
+
+
+def test_claim_level_detection_skips_claims_that_were_not_verified_to_begin_with(explanation_eval):
+    record = _record(
+        explanation_eval,
+        "Replace the filter every six months. [Source: aem_thermal_station.pdf, page 28, section 2.5.4 X]",
+    )
+    assert explanation_eval.evaluate_live_records([record])["claim_level_detection"] == {}
+
+
+def test_saved_records_can_be_analysed_again(explanation_eval, tmp_path, monkeypatch):
+    record = _record(explanation_eval)
+    monkeypatch.setattr(explanation_eval, "REPORT_DIR", tmp_path)
+    explanation_eval._save_records([record])
+    again = explanation_eval.load_records(tmp_path / "explanation-live-records.json")
+    assert again[0]["state"]["final_answer"] == ANSWER
+    assert again[0]["state"]["retrieved_chunks"][0].chunk_id == "c_egw"
+    first = explanation_eval.evaluate_live_records([record])
+    second = explanation_eval.evaluate_live_records(again)
+    assert first["claim_level_detection"] == second["claim_level_detection"]
