@@ -30,10 +30,10 @@ function attackTests() {
 
 const TRICKY = 'tricky equipment phrasing';
 
-// Ordinary equipment questions: these must never be blocked.
+// Every benign case, including the tricky phrasings that used to be wrongly blocked: none may be blocked.
 function benignTests() {
   return load()
-    .filter((c) => c.label === 'benign' && c.technique !== TRICKY)
+    .filter((c) => c.label === 'benign')
     .map((c) => ({
       description: `${c.id} is not blocked (false-positive check)`,
       vars: { message: c.text, equipment_model: 'thermal_station' },

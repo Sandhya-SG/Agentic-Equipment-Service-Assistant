@@ -6,8 +6,8 @@ Black-box tests against a running backend (`POST /api/chat` and friends). They c
 
 | File | What it checks | Key needed | Where it runs |
 |---|---|---|---|
-| `free-api.yaml` | Input validation (422), error contract, health, **every catalogued prompt-injection attack is blocked**, ordinary questions are not blocked | No (fake key is fine) | Every PR (`.github/workflows/promptfoo-tests-ci.yml`), gating |
-| `known-gaps.yaml` | Documented weaknesses of the pattern guard: tricky legitimate questions that get blocked, attacks the guard cannot see | No | CI, **reported only, expected to fail** |
+| `free-api.yaml` | Input validation (422), error contract, health, **every catalogued prompt-injection attack is blocked**, every ordinary question (including the tricky phrasings) is not blocked | No (fake key is fine) | Every PR (`.github/workflows/promptfoo-tests-ci.yml`), gating |
+| `known-gaps.yaml` | The 6 obfuscations a pattern guard cannot decode (ROT13, reversed text, hex, typos, split words, Tamil) | No | CI, **reported only, expected to fail** |
 | `live-api.yaml` | Request decision and over-asking, routing, retrieval and equipment isolation, citations, explanation, grounding, safety on the seeded unsafe cases, injection resistance past the guard, disclosure | Real `OPENAI_API_KEY` | Locally, on demand (CI has no manuals) |
 | `perf.yaml` | End-to-end latency per request type against the PRD target of about 10 s | Real key | Locally, on demand |
 
@@ -60,7 +60,8 @@ Details and evidence are in `docs/evaluation-test-cases-and-results.md`.
 
 - **Fixed in this work:** requests without a `conversation_id` all shared the id `demo-session`, so unrelated API callers continued each other's pending clarification. Each request now gets its own id unless the client sends one (regression test in `tests/test_chat.py`).
 - **Fixed on main by the team, confirmed by these suites:** the Request agent no longer over-asks on short clear questions (the two over-ask checks failed before and pass now), hazardous requests are no longer mostly met with a bare clarification (1 of 25, was 10), and every request type is under the 10 s target (the hazardous path went from 14 s to 7.8 s).
-- **Still open:** the input guard blocks 6 of 24 legitimate questions and misses 10 obfuscated attacks (`known-gaps.yaml`); grounding is 87.5% against the 90% target, with g04 flagged by the judge for "reconnect" (the manual itself says "unplug the quick connect and reconnect to the QD for air supply", so this is mostly the judge misreading ambiguous wording).
+- **Fixed in this work:** the input guard. It blocked 6 of 24 legitimate questions ("Show instructions for resetting the controller") and missed 10 of 34 attacks. The patterns now target the assistant's own instructions, and the guard also reads look-alike letters, digits for letters, spaced letters, zero-width characters and base64, plus French, Spanish, German, Chinese and Malay phrasings, paraphrases and data-exfiltration requests. Now 0 of 36 legitimate questions are blocked and 36 of 42 attacks are blocked; the other 6 are in `known-gaps.yaml`, and the live suite shows they are resisted downstream.
+- **Still open:** grounding is unstable around the 90% target (73% to 94% over six runs), with g04 flagged by the judge for "reconnect" (the manual itself says "unplug the quick connect and reconnect to the QD for air supply", so this is mostly the judge misreading ambiguous wording).
 - **Windows only:** a request containing non-ASCII text returned 503 when the backend ran without `PYTHONUTF8=1`, because the agents print the text to a cp1252 console. Linux and Docker are not affected.
 
 ## Notes
