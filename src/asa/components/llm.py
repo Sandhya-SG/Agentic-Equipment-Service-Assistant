@@ -16,6 +16,12 @@ needed a key, and no call had a timeout, an output cap or a budget. This module 
 
 Settings (environment): OPENAI_TIMEOUT_S, OPENAI_CONNECT_TIMEOUT_S, OPENAI_MAX_RETRIES,
 OPENAI_MAX_OUTPUT_TOKENS, OPENAI_REQUEST_TOKEN_BUDGET (0 turns the budget off).
+
+A spend cap protects a small prepaid balance: with OPENAI_SPEND_CAP_USD set, the estimated cost of every call (its
+tokens times the model's price) is added to a ledger file (OPENAI_SPEND_LEDGER, default `.openai_spend.json` in the
+working directory), and once the ledger reaches the cap every further call raises `SpendCapReached` before anything is
+sent. The estimate covers only calls made through this client (the app and the evaluation scripts), not DeepEval or
+Promptfoo, which have their own clients; set the limit in the OpenAI console for those.
 """
 
 from __future__ import annotations
@@ -128,6 +134,117 @@ def _caller_label(kwargs: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Spend cap: a ledger of the estimated cost, shared by every process that uses this client
+# ---------------------------------------------------------------------------
+
+# US dollars per million tokens (input, output). A model that is not listed is priced like the most expensive one
+# below, so the estimate errs on the side of stopping early.
+PRICES_PER_MILLION = {
+    "gpt-4o-mini": (0.15, 0.60),
+    "gpt-4.1-mini": (0.40, 1.60),
+    "gpt-4.1-nano": (0.10, 0.40),
+    "gpt-4o": (2.50, 10.00),
+    "gpt-4.1": (2.00, 8.00),
+}
+UNKNOWN_MODEL_PRICE = (2.50, 10.00)
+DEFAULT_LEDGER = ".openai_spend.json"
+
+
+class SpendCapReached(RuntimeError):
+    """The estimated spend has reached OPENAI_SPEND_CAP_USD; no further model call is made."""
+
+
+_ledger_lock = threading.Lock()
+
+
+def estimate_cost(model: Any, prompt_tokens: Any, completion_tokens: Any) -> float:
+    """Estimated dollars for one call. Unknown token counts count as zero."""
+    name = model if isinstance(model, str) else ""
+    price_in, price_out = next(
+        (price for known, price in PRICES_PER_MILLION.items() if name == known or name.startswith(known + "-")),
+        UNKNOWN_MODEL_PRICE,
+    )
+    tokens_in = prompt_tokens if isinstance(prompt_tokens, int) else 0
+    tokens_out = completion_tokens if isinstance(completion_tokens, int) else 0
+    return (tokens_in * price_in + tokens_out * price_out) / 1_000_000
+
+
+def _ledger_path() -> str:
+    return os.getenv("OPENAI_SPEND_LEDGER") or DEFAULT_LEDGER
+
+
+def spend_cap() -> float | None:
+    """The cap in dollars, or None when no cap is set (or the value is not a positive number)."""
+    cap = _env_float("OPENAI_SPEND_CAP_USD", 0.0)
+    return cap if cap > 0 else None
+
+
+def read_ledger() -> dict:
+    """The ledger: estimated dollars spent and calls made so far. A missing or damaged file counts as empty."""
+    import json
+
+    try:
+        with open(_ledger_path(), encoding="utf-8") as handle:
+            data = json.load(handle)
+        return {"estimated_usd": float(data.get("estimated_usd", 0.0)), "calls": int(data.get("calls", 0))}
+    except (OSError, ValueError, TypeError, AttributeError):
+        return {"estimated_usd": 0.0, "calls": 0}
+
+
+def _write_ledger(ledger: dict) -> None:
+    import json
+    import tempfile
+    from datetime import datetime, timezone
+
+    path = _ledger_path()
+    payload = {**ledger, "updated": datetime.now(timezone.utc).isoformat()}
+    directory = os.path.dirname(os.path.abspath(path))
+    handle, temp = tempfile.mkstemp(dir=directory, suffix=".tmp")
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as out:
+            json.dump(payload, out)
+        os.replace(temp, path)
+    except OSError:
+        with contextlib.suppress(OSError):
+            os.remove(temp)
+
+
+def add_spend(dollars: float, calls: int = 1) -> dict:
+    """Add to the ledger (used after each call, and by `scripts/openai_spend.py --add` for spend made before)."""
+    with _ledger_lock:
+        ledger = read_ledger()
+        ledger["estimated_usd"] = round(ledger["estimated_usd"] + dollars, 6)
+        ledger["calls"] += calls
+        _write_ledger(ledger)
+        return ledger
+
+
+def reset_spend() -> None:
+    with _ledger_lock:
+        _write_ledger({"estimated_usd": 0.0, "calls": 0})
+
+
+def _check_spend_cap() -> None:
+    cap = spend_cap()
+    if cap is None:
+        return
+    spent = read_ledger()["estimated_usd"]
+    if spent >= cap:
+        raise SpendCapReached(
+            f"estimated OpenAI spend ${spent:.2f} has reached the cap of ${cap:.2f} (OPENAI_SPEND_CAP_USD); "
+            "raise the cap or reset the ledger with scripts/openai_spend.py to continue"
+        )
+
+
+def _record_spend(response: Any, model: Any) -> None:
+    if spend_cap() is None:
+        return
+    usage = getattr(response, "usage", None)
+    cost = estimate_cost(model, getattr(usage, "prompt_tokens", None), getattr(usage, "completion_tokens", None))
+    add_spend(cost)
+
+
+# ---------------------------------------------------------------------------
 # Lazy client
 # ---------------------------------------------------------------------------
 
@@ -174,6 +291,7 @@ class _Completions:
 
     def create(self, *args: Any, **kwargs: Any) -> Any:
         _check_budget()
+        _check_spend_cap()
         if "max_completion_tokens" not in kwargs and "max_tokens" not in kwargs:
             cap = _env_int("OPENAI_MAX_OUTPUT_TOKENS", DEFAULT_MAX_OUTPUT_TOKENS)
             if cap > 0:
@@ -182,6 +300,7 @@ class _Completions:
         started = time.monotonic()
         response = _get_real_client().chat.completions.create(*args, **kwargs)
         _record_usage(response, label, kwargs.get("model"), time.monotonic() - started)
+        _record_spend(response, kwargs.get("model"))
         return response
 
 

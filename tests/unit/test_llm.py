@@ -297,3 +297,113 @@ def test_the_token_use_of_a_request_reaches_the_audit_record(tmp_path, monkeypat
     logging_sub.end_run("run1", {"llm_usage": usage})
     record = json.loads((tmp_path / "audit.jsonl").read_text(encoding="utf-8").splitlines()[-1])
     assert record["llm_usage"] == usage
+
+
+# --- the spend cap: an estimated-dollars ledger that stops every call at a limit ---
+
+
+@pytest.fixture
+def ledger(tmp_path, monkeypatch):
+    path = tmp_path / "spend.json"
+    monkeypatch.setenv("OPENAI_SPEND_LEDGER", str(path))
+    monkeypatch.delenv("OPENAI_SPEND_CAP_USD", raising=False)
+    return path
+
+
+def test_the_cost_of_a_call_is_tokens_times_the_price_of_the_model():
+    assert llm.estimate_cost("gpt-4o-mini", 1_000_000, 1_000_000) == pytest.approx(0.75)
+    assert llm.estimate_cost("gpt-4.1", 1_000_000, 0) == pytest.approx(2.0)
+    assert llm.estimate_cost("gpt-4o-mini", None, None) == 0.0
+
+
+def test_a_dated_model_name_is_priced_like_its_family_and_an_unknown_one_conservatively():
+    assert llm.estimate_cost("gpt-4o-mini-2024-07-18", 1_000_000, 0) == pytest.approx(0.15)
+    assert llm.estimate_cost("some-new-model", 1_000_000, 0) == pytest.approx(llm.UNKNOWN_MODEL_PRICE[0])
+    assert llm.estimate_cost(None, 1_000_000, 0) == pytest.approx(llm.UNKNOWN_MODEL_PRICE[0])
+
+
+def test_without_a_cap_nothing_is_recorded_or_limited(ledger):
+    for _ in range(3):
+        ask()
+    assert not ledger.exists()
+    assert llm.spend_cap() is None
+
+
+def test_each_call_adds_its_estimated_cost_to_the_ledger(ledger, monkeypatch):
+    monkeypatch.setenv("OPENAI_SPEND_CAP_USD", "5")
+    FakeOpenAI.tokens_per_call = 1_000_010  # 1,000,000 input and 10 output tokens
+    llm.client.chat.completions.create(model="gpt-4o-mini", messages=[])
+    llm.client.chat.completions.create(model="gpt-4o-mini", messages=[])
+    state = llm.read_ledger()
+    assert state["calls"] == 2 and state["estimated_usd"] == pytest.approx(0.3, abs=0.001)
+
+
+def test_once_the_cap_is_reached_the_next_call_is_refused_before_it_is_sent(ledger, monkeypatch):
+    monkeypatch.setenv("OPENAI_SPEND_CAP_USD", "0.20")
+    FakeOpenAI.tokens_per_call = 1_000_010
+    llm.client.chat.completions.create(model="gpt-4o-mini", messages=[])  # about $0.15
+    llm.client.chat.completions.create(model="gpt-4o-mini", messages=[])  # about $0.30: now over the cap
+    sent = len(FakeOpenAI.instances[0].calls)
+    with pytest.raises(llm.SpendCapReached, match="reached the cap"):
+        ask()
+    assert len(FakeOpenAI.instances[0].calls) == sent  # nothing was sent
+
+
+def test_the_ledger_is_shared_by_a_new_process_and_can_be_reset_or_topped_up(ledger, monkeypatch):
+    monkeypatch.setenv("OPENAI_SPEND_CAP_USD", "1.00")
+    llm.add_spend(0.60, calls=0)  # spend made before the ledger existed
+    assert llm.read_ledger()["estimated_usd"] == pytest.approx(0.6)
+    llm.reset_client()  # a new process would start here, with the file as the only memory
+    assert llm.read_ledger()["estimated_usd"] == pytest.approx(0.6)
+    llm.add_spend(0.5, calls=0)
+    with pytest.raises(llm.SpendCapReached):
+        ask()
+    llm.reset_spend()
+    ask()  # allowed again
+
+
+def test_a_damaged_ledger_counts_as_empty_and_does_not_crash(ledger, monkeypatch):
+    monkeypatch.setenv("OPENAI_SPEND_CAP_USD", "1")
+    ledger.write_text("{not json", encoding="utf-8")
+    assert llm.read_ledger() == {"estimated_usd": 0.0, "calls": 0}
+    ask()  # still works, and the ledger is rewritten
+    assert llm.read_ledger()["calls"] == 1
+
+
+@pytest.mark.parametrize("value", ["", "0", "-1", "abc"])
+def test_a_cap_that_is_not_a_positive_number_means_no_cap(ledger, monkeypatch, value):
+    monkeypatch.setenv("OPENAI_SPEND_CAP_USD", value)
+    assert llm.spend_cap() is None
+
+
+def test_concurrent_calls_all_reach_the_ledger(ledger, monkeypatch):
+    import contextvars
+    from concurrent.futures import ThreadPoolExecutor
+
+    monkeypatch.setenv("OPENAI_SPEND_CAP_USD", "100")
+    FakeOpenAI.tokens_per_call = 1_000_010
+    context = contextvars.copy_context()
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(
+            pool.map(
+                lambda _: context.copy().run(llm.client.chat.completions.create, model="gpt-4o-mini", messages=[]),
+                range(24),
+            )
+        )
+    assert llm.read_ledger()["calls"] == 24
+
+
+def test_the_spend_script_shows_adds_and_resets(ledger, monkeypatch, capsys):
+    import importlib.util
+
+    monkeypatch.setenv("OPENAI_SPEND_CAP_USD", "0.55")
+    spec = importlib.util.spec_from_file_location("openai_spend", REPO_ROOT / "scripts" / "openai_spend.py")
+    script = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(script)
+    assert script.main(["--add", "0.30"]) == 0
+    out = capsys.readouterr().out
+    assert "$0.3000" in out and "room left: $0.2500" in out
+    script.main(["--add", "0.30"])
+    assert "CAP REACHED" in capsys.readouterr().out
+    script.main(["--reset"])
+    assert "$0.0000" in capsys.readouterr().out

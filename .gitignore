@@ -34,3 +34,6 @@ deepeval-tests/.deepeval/
 
 # MLflow runs
 mlruns/
+
+# Estimated OpenAI spend ledger (see OPENAI_SPEND_CAP_USD)
+.openai_spend.json
