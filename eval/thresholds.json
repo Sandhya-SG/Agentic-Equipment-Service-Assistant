@@ -15,6 +15,11 @@
     "deterministic": {"min": 1.0},
     "expectation_pass_rate": {"min": 1.0}
   },
+  "retrieval": {
+    "isolation": {"min": 1.0},
+    "area_hit_at_5": {"min": 0.85},
+    "area_mrr": {"min": 0.7}
+  },
   "output_guard": {
     "catch_rate": {"min": 1.0},
     "false_action_rate": {"max": 0.0},

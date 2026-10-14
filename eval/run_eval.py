@@ -29,6 +29,7 @@ def run_offline() -> dict:
     import explanation_eval
     import injection_eval
     import output_eval
+    import retrieval_eval
     import safety_eval
 
     return {
@@ -36,6 +37,8 @@ def run_offline() -> dict:
         "safety_rules": safety_eval.evaluate(safety_eval.load_cases()),
         "output_guard": output_eval.evaluate(output_eval.load_cases()),
         "explanation": explanation_eval.evaluate(explanation_eval.load_cases()),
+        # Needs the manual index and the local embedding model; reported as unavailable without them.
+        "retrieval": retrieval_eval.run(),
     }
 
 
@@ -43,8 +46,8 @@ def check_targets(report: dict, targets: dict) -> list[dict]:
     """One row per target: the value, the target and whether it is met."""
     rows = []
     for suite, metrics in targets.items():
-        if suite.startswith("_"):
-            continue
+        if suite.startswith("_") or report.get(suite, {}).get("available") is False:
+            continue  # a suite that could not run (no index) has no value to judge
         for metric, bound in metrics.items():
             value = report[suite][metric]
             if "min" in bound:
@@ -91,6 +94,18 @@ def print_report(report: dict, rows: list[dict]) -> None:
         print(f"  explanation case failed ({item['id']}): {item['problems']}")
     for gap in explanation["open_gaps"]:
         print(f"  known gap ({gap['id']}): {gap['note']}")
+
+    retrieval = report["retrieval"]
+    if retrieval.get("available") is False:
+        print(f"\nretrieval: skipped ({retrieval['reason']})")
+    else:
+        print(
+            f"\nretrieval: {retrieval['questions']} questions; right area of the manual in the top 5 "
+            f"{retrieval['area_hit_at_5']:.1%} (exact section {retrieval['hit_at_5']:.1%}), MRR {retrieval['area_mrr']} "
+            f"(exact {retrieval['mrr']}), equipment isolation {retrieval['isolation']:.0%}"
+        )
+        for item in retrieval["misses"]:
+            print(f"  right area not in the top 5 ({item['id']}): {item['query'][:70]!r}")
 
     output = report["output_guard"]
     print(
