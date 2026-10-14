@@ -1,0 +1,16 @@
+# A one-off pod that calls the backend Service like the frontend does (the backend admits only app=frontend pods).
+apiVersion: v1
+kind: Pod
+metadata: {name: mp-client, namespace: aem, labels: {app: frontend}}
+spec:
+  restartPolicy: Never
+  securityContext: {runAsNonRoot: true, runAsUser: 10001, seccompProfile: {type: RuntimeDefault}}
+  containers:
+    - name: client
+      image: aem-backend:2f0cc72
+      imagePullPolicy: IfNotPresent
+      command: ["python", "/mp/session_client.py"]
+      env: [{name: CONVERSATIONS, value: "20"}]
+      securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+      volumeMounts: [{name: mp, mountPath: /mp}]
+  volumes: [{name: mp, configMap: {name: mp-test}}]

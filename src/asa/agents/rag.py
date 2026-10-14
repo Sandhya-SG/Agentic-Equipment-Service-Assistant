@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 from typing import Any
 
 from dotenv import load_dotenv
-from openai import OpenAI
 
+from asa.components import llm
 from asa.components.tracing import llm_name, traced
 from asa.graph.state import Chunk
 from asa.guardrails.injection import sanitize_context
@@ -81,17 +80,15 @@ class AgenticRAGAgent:
         self.junior_model = "gpt-4o-mini"
         self.senior_model = "gpt-5.4-mini"
 
-    def _get_client(self) -> OpenAI:
+    def _get_client(self):
         """
-        Create the OpenAI client only when an LLM call is
-        actually required.
-
-        Retrieval-only use and mocked unit tests therefore do
-        not require external OpenAI credentials at import time.
+        The shared client of `asa.components.llm`. It creates the real OpenAI client on the first call (so
+        retrieval-only use and mocked unit tests need no credentials) and applies the timeout, retries,
+        output cap and per-request token budget.
         """
 
         if self.client is None:
-            self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+            self.client = llm.client
 
         return self.client
 

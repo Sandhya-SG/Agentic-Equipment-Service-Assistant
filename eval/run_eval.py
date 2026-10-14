@@ -4,8 +4,8 @@
     python eval/run_eval.py --enforce             # exit 1 if any target is missed (a CI gate)
     python eval/run_eval.py --out report.json     # also write every number and failure to a file
 
-Suites: the prompt-injection guard (`injection_eval.py`), the deterministic safety rules (`safety_eval.py`) and the
-response firewall (`output_eval.py`).
+Suites: the prompt-injection guard (`injection_eval.py`), the deterministic safety rules (`safety_eval.py`) the
+response firewall (`output_eval.py`) and the explainability layer (`explanation_eval.py`, offline part).
 Targets live in `eval/thresholds.json`. The suites that call OpenAI (clarification, grounding) are separate and
 opt-in; see `eval/clarification_eval.py`.
 """
@@ -26,14 +26,19 @@ THRESHOLDS = EVAL_DIR / "thresholds.json"
 
 
 def run_offline() -> dict:
+    import explanation_eval
     import injection_eval
     import output_eval
+    import retrieval_eval
     import safety_eval
 
     return {
         "injection": injection_eval.evaluate(injection_eval.load_cases()),
         "safety_rules": safety_eval.evaluate(safety_eval.load_cases()),
         "output_guard": output_eval.evaluate(output_eval.load_cases()),
+        "explanation": explanation_eval.evaluate(explanation_eval.load_cases()),
+        # Needs the manual index and the local embedding model; reported as unavailable without them.
+        "retrieval": retrieval_eval.run(),
     }
 
 
@@ -41,8 +46,8 @@ def check_targets(report: dict, targets: dict) -> list[dict]:
     """One row per target: the value, the target and whether it is met."""
     rows = []
     for suite, metrics in targets.items():
-        if suite.startswith("_"):
-            continue
+        if suite.startswith("_") or report.get(suite, {}).get("available") is False:
+            continue  # a suite that could not run (no index) has no value to judge
         for metric, bound in metrics.items():
             value = report[suite][metric]
             if "min" in bound:
@@ -79,6 +84,29 @@ def print_report(report: dict, rows: list[dict]) -> None:
     for item in safety["open_gaps"]:
         print(f"  known gap: {item['text']!r} ({item['note']})")
 
+    explanation = report["explanation"]
+    print(
+        f"\nexplainability: {explanation['cases_total']} cases; expectations met "
+        f"{explanation['expectation_pass_rate']:.0%} (the near-miss claims are ordinary cases); "
+        f"{explanation['known_gaps_open']} known gap(s) open"
+    )
+    for item in explanation["failures"]:
+        print(f"  explanation case failed ({item['id']}): {item['problems']}")
+    for gap in explanation["open_gaps"]:
+        print(f"  known gap ({gap['id']}): {gap['note']}")
+
+    retrieval = report["retrieval"]
+    if retrieval.get("available") is False:
+        print(f"\nretrieval: skipped ({retrieval['reason']})")
+    else:
+        print(
+            f"\nretrieval: {retrieval['questions']} questions; right area of the manual in the top 5 "
+            f"{retrieval['area_hit_at_5']:.1%} (exact section {retrieval['hit_at_5']:.1%}), MRR {retrieval['area_mrr']} "
+            f"(exact {retrieval['mrr']}), equipment isolation {retrieval['isolation']:.0%}"
+        )
+        for item in retrieval["misses"]:
+            print(f"  right area not in the top 5 ({item['id']}): {item['query'][:70]!r}")
+
     output = report["output_guard"]
     print(
         f"\nresponse firewall: {output['must_act_total']} answers that must be cleaned or withheld, {output['clean_total']} clean ones"
@@ -105,7 +133,14 @@ def main() -> int:
     print(f"\n{len(rows) - len(missed)} of {len(rows)} targets met" + (" (report only)" if not args.enforce else ""))
 
     if args.out:
-        payload = {"created": datetime.now(timezone.utc).isoformat(), "targets": rows, "report": report}
+        from asa.versioning import build_info
+
+        payload = {
+            "created": datetime.now(timezone.utc).isoformat(),
+            "versions": build_info(include_datasets=True),  # code, models, prompts, manuals, datasets
+            "targets": rows,
+            "report": report,
+        }
         Path(args.out).write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
         print(f"report written to {args.out}")
 

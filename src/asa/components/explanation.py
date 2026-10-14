@@ -22,6 +22,7 @@ dict with at least `confidence` (0 to 1) and `confidence_level` ("low", "medium"
 from __future__ import annotations
 
 import re
+from collections import Counter
 from typing import Any
 
 from asa.graph.state import CONFIDENCE_FLOOR
@@ -45,6 +46,11 @@ MIN_SHORT_CLAIM_WORDS = 2  # ... or, for a shorter claim ("Electrical Hazards"),
 MIN_MATCH = 0.30  # ... and be at least this similar to it (cosine of the content-word sets)
 MAX_SENTENCE_CHARS = 320  # longer "sentences" are merged table rows or lists, not quotable
 MAX_ROW_LINES = 6  # a table row quote spans at most this many cells (the PDF puts one cell per line)
+MAX_SHORT_CLAIM_WORDS = 8  # a claim of up to this many content words may lack at most MAX_MISSING_SHORT of them ...
+MAX_MISSING_SHORT = 1  # ... from its quote
+MAX_MISSING_SHARE = 0.30  # a longer claim may lack at most this share of its content words from its quote
+MAX_SUBSTITUTION_WORDS = 30  # the swapped-term rule is only used on a quote of up to this many content words
+MIN_CLAIM_WORDS = 2  # a fragment with fewer content words ("[", "Note") is not a claim
 MAX_CITATIONS = 8
 MAX_QUOTE_CHARS = 300
 NO_EXPLANATION_STATUSES = {"clarification", "blocked", "unavailable"}
@@ -89,8 +95,99 @@ def _norm(text: str) -> str:
     return " ".join(str(text).split())
 
 
+# Wording that carries no claim of its own ("it is important to note that ..."): left out when claims are compared.
+_FILLER = frozenset(
+    "ensure ensuring important note notes additional context include includes including included following follow "
+    "also please always whenever per such these those there then thus therefore however essential necessary "
+    "you your now just simply".split()
+)
+# Spellings and abbreviations that differ between an answer and the manual but mean the same.
+_ABBREVIATIONS = {
+    "mins": "minutes",
+    "min": "minute",
+    "secs": "seconds",
+    "sec": "second",
+    "temp": "temperature",
+    "people": "persons",
+    "vapor": "vapour",
+    "energized": "energised",
+    "energize": "energise",
+    "colour": "color",
+    "grey": "gray",
+}
+_HYPHEN = re.compile(r"(?<=[a-z])-(?=[a-z])")  # "de-activate" and "deactivate" are the same word
+_DIGIT_LETTER = re.compile(r"(?<=\d)(?=[a-z])|(?<=[a-z])(?=\d)")  # "30mins" is "30 mins", "60Hz" is "60 Hz"
+
+
+def _tokens(text: str) -> list[str]:
+    """Lower-case word and number tokens of a text, normalised so that wording differences that do not change the
+    meaning (hyphens, "30mins", "vapor"/"vapour") do not stop two texts from matching."""
+    text = _HYPHEN.sub("", str(text).lower().replace("\u2019", "'"))
+    return [_ABBREVIATIONS.get(t, t) for t in _WORD.findall(_DIGIT_LETTER.sub(" ", text))]
+
+
+def _stem(word: str) -> str:
+    """A light stem so that "drained", "draining" and "drain" (or "torqued" and "torque") match."""
+    if len(word) <= 3 or any(ch.isdigit() for ch in word):
+        return word
+    if word.endswith("ies") and len(word) > 4:
+        return word[:-3] + "y"
+    for suffix in ("ing", "ed", "s"):
+        if word.endswith(suffix) and not word.endswith("ss") and len(word) - len(suffix) >= 3:
+            word = word[: -len(suffix)]
+            break
+    return word[:-1] if word.endswith("e") and len(word) > 3 else word
+
+
 def _words(text: str) -> set[str]:
-    return {w for w in _WORD.findall(str(text).lower()) if w not in _STOP and len(w) > 1}
+    """The content words of a text, stemmed, without stop words and without filler."""
+    return {_stem(t) for t in _tokens(text) if t not in _STOP and t not in _FILLER and len(t) > 1}
+
+
+_ACRONYM = re.compile(r"\b[A-Z][A-Z0-9]+\b")
+
+
+def _acronyms(text: str) -> set[str]:
+    """Acronyms and other upper-case terms (EGW, IPA, QD, TIM), lower-cased."""
+    return {t.lower() for t in _ACRONYM.findall(str(text)) if not t.isdigit()}
+
+
+# Words that mean the opposite of each other (as stems). A claim that uses one where the manual sentence uses the
+# other, and never the claim's own, says the opposite: "stay close" against "keep away".
+_ANTONYM_PAIRS = (
+    ("away", "near"),
+    ("away", "clos"),
+    ("away", "closer"),
+    ("open", "clos"),
+    ("on", "off"),
+    ("start", "stop"),
+    ("enabl", "disabl"),
+    ("connect", "disconnect"),
+    ("attach", "detach"),
+    ("increas", "decreas"),
+    ("rais", "lower"),
+    ("high", "low"),
+    ("hot", "cold"),
+    ("inlet", "outlet"),
+    ("allow", "prohibit"),
+    ("alway", "never"),
+    ("before", "after"),
+    ("lock", "unlock"),
+    ("tighten", "loosen"),
+    ("insert", "remov"),
+    ("full", "empty"),
+    ("mandatory", "optional"),
+)
+
+
+def _antonym_flip(claim: str, quote: str) -> bool:
+    claim_stems = {_stem(t) for t in _tokens(claim)}
+    quote_stems = {_stem(t) for t in _tokens(quote)}
+    for first, second in _ANTONYM_PAIRS:
+        for a, b in ((first, second), (second, first)):
+            if a in claim_stems and b in quote_stems and a not in quote_stems and b not in claim_stems:
+                return True
+    return False
 
 
 _PASSAGE_SPLIT = re.compile(r"(?<=[.!?])\s+|\s[•●\-]\s")
@@ -165,17 +262,102 @@ def _clean_quote(sentence: str) -> str:
     return _LEADING_FURNITURE.sub("", sentence).strip()
 
 
+# "should not exceed 10%" and "maximum 10%" say the same thing: a limit is not a negation of the figure.
+_LIMIT_CLAIM = re.compile(
+    r"\b(?:(?:should|must|shall|can|could|may|will)\s+)?(?:not|never)\s+"
+    r"(?:exceed|be\s+(?:more|greater|higher|larger)\s+than|go\s+(?:above|over))\b"
+    r"|\bno\s+(?:more|greater|higher)\s+than\b",
+    re.IGNORECASE,
+)
+_LIMIT_QUOTE = re.compile(
+    r"\b(?:maxim(?:um|a)|max|limit|at\s+most|up\s+to|no\s+more\s+than|not\s+exceed\w*)\b", re.IGNORECASE
+)
+
+
 def _negated(text: str) -> bool:
-    tokens = _TOKEN.findall(str(text).lower().replace("’", "'"))
+    tokens = _TOKEN.findall(str(text).lower().replace("\u2019", "'"))
     return any(token in _NEGATION_WORDS or token.endswith("n't") for token in tokens)
 
 
 def _contradicts(claim: str, quote: str) -> bool:
     """True when the quote cannot support the claim although their words match: one of them is
     negated and the other is not, or the claim states a number the quote does not contain."""
-    if _negated(claim) != _negated(quote):
+    plain_claim, plain_quote = claim, quote
+    if _LIMIT_CLAIM.search(claim) and _LIMIT_QUOTE.search(quote):
+        plain_claim, plain_quote = _LIMIT_CLAIM.sub(" ", claim), _LIMIT_CLAIM.sub(" ", quote)
+    if _negated(plain_claim) != _negated(plain_quote):
         return True
     return not set(_NUMBER.findall(claim)) <= set(_NUMBER.findall(quote))
+
+
+def _conflict(
+    claim: str, quote: str, claim_words: set[str], quote_words: set[str], evidence_acronyms: set[str]
+) -> bool:
+    """True when a quote that shares most of the claim's words still cannot support it:
+    * negation or a number differs (see `_contradicts`);
+    * the claim names an acronym (EGW, IPA) that the quote does not contain;
+    * the claim uses the opposite of a word the quote uses (close/away, on/off);
+    * the claim swaps a term for another: it has words the quote lacks, while a term the quote repeats is missing
+      from the claim ("air inlet valve" against "EGW inlet valve ... EGW sources ... EGW hoses").
+    """
+    if _contradicts(claim, quote):
+        return True
+    named = {
+        a for a in _acronyms(claim) if a not in _STOP and a not in _FILLER and a not in _NEGATION_WORDS and len(a) <= 6
+    }
+    if named and not named <= set(_tokens(quote)):
+        return True
+    if _number_mislabelled(claim, quote):
+        return True
+    # A long quote can span several sentences; the opposite or substituted term must also be judged against the
+    # sentence that says what the claim says, not against words from the sentences around it.
+    segment = _best_segment(claim_words, quote)
+    for text in {quote, segment}:
+        words = _words(text)
+        if _antonym_flip(claim, text) or (claim_words - words and _substituted(claim_words, text)):
+            return True
+    return False
+
+
+def _substituted(claim_words: set[str], text: str) -> bool:
+    """True when the text repeats a term (twice or more) that the claim leaves out."""
+    counts = Counter(_stem(t) for t in _tokens(text) if t not in _STOP and t not in _FILLER and len(t) > 2)
+    if sum(counts.values()) > MAX_SUBSTITUTION_WORDS:
+        return False  # a window that spans table rows or several sentences repeats terms of its own
+    return any(count >= 2 and word not in claim_words for word, count in counts.items())
+
+
+def _best_segment(claim_words: set[str], quote: str) -> str:
+    """The sentence of the quote that shares the most content words with the claim."""
+    parts = [part for part in _SENTENCE_SPLIT.split(quote) if part.strip()]
+    return max(parts, key=lambda part: len(claim_words & _words(part)), default=quote)
+
+
+def _number_mislabelled(claim: str, quote: str) -> bool:
+    """True when the claim gives a number for a quantity ("flow rate 7") while the quote gives a different number
+    for that same quantity ("Flow Rate 4 LPM ... Pressure 7 Bar"): the number exists in the quote, for another thing.
+    """
+    claim_tokens, quote_tokens = _tokens(claim), _tokens(quote)
+
+    def label_of(tokens: list[str], index: int) -> str | None:
+        for token in reversed(tokens[:index]):
+            if not token.isdigit() and token not in _STOP and token not in _FILLER and len(token) > 2:
+                return _stem(token)
+        return None
+
+    for index, token in enumerate(claim_tokens):
+        if not token.isdigit() or (index and claim_tokens[index - 1].isdigit()):
+            continue  # only the first number after a label (a range "15~25" is one value)
+        label = label_of(claim_tokens, index)
+        if label is None:
+            continue
+        following = []  # the numbers that directly follow the label in the quote
+        for at, other in enumerate(quote_tokens[:-1]):
+            if not other.isdigit() and _stem(other) == label and quote_tokens[at + 1].isdigit():
+                following.append(quote_tokens[at + 1])
+        if following and token not in following:
+            return True
+    return False
 
 
 def _sentence_candidates(chunks: list):
@@ -194,29 +376,33 @@ def _row_candidates(chunks: list):
 
 def _find_quote(claim: str, chunks: list) -> tuple[tuple[str, Any] | None, bool]:
     """The sentence of the given passages most similar to the claim (cosine of content words).
-
     Prose sentences are tried first; table rows (see `_table_rows`) only when no sentence supports
     the claim, so answers taken from specification tables can be verified too.
-
     Returns `(quote and chunk, or None, contradicted)`. A similar sentence that contradicts the claim
-    (see `_contradicts`) is never used as its quote; `contradicted` is True when only such sentences
+    (see `_conflict`) is never used as its quote; `contradicted` is True when only such sentences
     matched, so the claim stays unverified and the user can be told why.
     """
     claim_words = _words(claim)
     if not claim_words:
         return None, False
-    found, contradicted = _best_candidate(claim, claim_words, _sentence_candidates(chunks))
+    acronyms: set[str] = set()
+    for chunk in chunks:
+        acronyms |= _acronyms(_get(chunk, "text", "") or "")
+    found, contradicted = _best_candidate(claim, claim_words, _sentence_candidates(chunks), acronyms=acronyms)
     if found is None:
-        found, row_contradicted = _best_candidate(claim, claim_words, _row_candidates(chunks), rows=True)
+        found, row_contradicted = _best_candidate(
+            claim, claim_words, _row_candidates(chunks), rows=True, acronyms=acronyms
+        )
         contradicted = contradicted or row_contradicted
     return (found, False) if found is not None else (None, contradicted)
 
 
 def _best_candidate(
-    claim: str, claim_words: set[str], candidates, rows: bool = False
+    claim: str, claim_words: set[str], candidates, rows: bool = False, acronyms: set[str] | None = None
 ) -> tuple[tuple[str, Any] | None, bool]:
-    """The candidate quote most similar to the claim, skipping those that contradict it.
-
+    """The candidate quote most similar to the claim, skipping those that cannot support it.
+    A quote must share enough words with the claim, be similar enough, cover enough of the claim (a long claim
+    that a short sentence only partly says is not supported by it) and not conflict with it (see `_conflict`).
     For table rows, a row that starts with the claim's leading term (its row label, for example
     "PDU: ...") ranks above every row that does not, so a quote neither starts in the previous row
     nor in a column header; the similarity decides within each group.
@@ -226,6 +412,12 @@ def _best_candidate(
     claim_label = _ALPHA_WORD.search(claim)
     # A short claim (a hazard or PPE label) must share all of its words; a one-word claim never matches.
     required = max(MIN_SHORT_CLAIM_WORDS, min(MIN_SHARED_WORDS, len(claim_words)))
+    # How many of the claim's words the quote may lack: one for a short claim, a share of a long one.
+    allowed_missing = (
+        MAX_MISSING_SHORT
+        if len(claim_words) <= MAX_SHORT_CLAIM_WORDS and not rows
+        else int(MAX_MISSING_SHARE * len(claim_words))
+    )
     for quote, chunk in candidates:
         words = _words(quote)
         shared = claim_words & words
@@ -234,7 +426,9 @@ def _best_candidate(
         score = len(shared) / ((len(claim_words) * len(words)) ** 0.5)
         if score < MIN_MATCH:
             continue
-        if _contradicts(claim, quote):
+        if len(claim_words - words) > allowed_missing:
+            continue  # the claim says more than this sentence does: it is not supported by it
+        if _conflict(claim, quote, claim_words, words, acronyms or set()):
             contradicted = True
             continue
         label = _ALPHA_WORD.search(quote) if rows and claim_label else None
@@ -312,39 +506,17 @@ def _claims_from_structure(
     Safety uses SafetyClaim.
     """
 
-    by_id = {
-        _get(chunk, "chunk_id"): chunk
-        for chunk in chunks
-    }
+    by_id = {_get(chunk, "chunk_id"): chunk for chunk in chunks}
 
     claims = []
 
     structured_items = (
-        [
-            (cause, "cause")
-            for cause
-            in state.get(
-                "root_causes"
-            ) or []
-        ]
-        + [
-            (step, "action")
-            for step
-            in state.get(
-                "troubleshooting_steps"
-            ) or []
-        ]
-        + [
-            (claim, "text")
-            for claim
-            in state.get(
-                "safety_claims"
-            ) or []
-        ]
+        [(cause, "cause") for cause in state.get("root_causes") or []]
+        + [(step, "action") for step in state.get("troubleshooting_steps") or []]
+        + [(claim, "text") for claim in state.get("safety_claims") or []]
     )
 
     for item, field in structured_items:
-
         text = _get(
             item,
             field,
@@ -353,8 +525,7 @@ def _claims_from_structure(
 
         preferred = [
             by_id[chunk_id]
-            for chunk_id
-            in (
+            for chunk_id in (
                 _get(
                     item,
                     "supporting_chunk_ids",
@@ -446,7 +617,11 @@ def explain(state: dict, status: str) -> dict | None:
     verified = 0
     contradicted = 0
     # An escalation withholds the answer: quoting the manual would only support what the user is not shown.
-    claims = [] if status == "escalated" else _collect_claims(state, chunks)
+    claims = (
+        []
+        if status == "escalated"
+        else [c for c in _collect_claims(state, chunks) if len(_words(c[0])) >= MIN_CLAIM_WORDS]
+    )
     for claim, preferred, strict in claims:
         candidates = preferred if strict else (preferred or chunks)
         found, contradiction = _find_quote(claim, candidates) if candidates else (None, False)
@@ -487,7 +662,7 @@ def explain(state: dict, status: str) -> dict | None:
         if contradicted:
             notes.append(
                 f"{contradicted} claim(s) appear to contradict the cited manual sentence "
-                "(negation or numbers differ): verify them."
+                "(negation, numbers or named terms differ): verify them."
             )
     else:
         notes.append("No individual claims could be checked against the manual.")

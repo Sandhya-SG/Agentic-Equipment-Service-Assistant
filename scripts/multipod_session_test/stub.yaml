@@ -1,0 +1,43 @@
+# Temporary test resources for the multi-pod session check (see README.md): a stand-in for the OpenAI API and the
+# network rules that let the backend reach it. Delete them afterwards.
+apiVersion: v1
+kind: Pod
+metadata: {name: stub-openai, namespace: aem, labels: {app: stub-openai}}
+spec:
+  securityContext: {runAsNonRoot: true, runAsUser: 10001, seccompProfile: {type: RuntimeDefault}}
+  containers:
+    - name: stub
+      image: aem-backend:2f0cc72
+      imagePullPolicy: IfNotPresent
+      command: ["python", "/mp/stub_openai.py"]
+      ports: [{containerPort: 8080}]
+      securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+      volumeMounts: [{name: mp, mountPath: /mp}]
+  volumes: [{name: mp, configMap: {name: mp-test}}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: stub-openai, namespace: aem}
+spec:
+  selector: {app: stub-openai}
+  ports: [{port: 8080, targetPort: 8080}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: mp-test-stub, namespace: aem}
+spec:
+  podSelector: {matchLabels: {app: stub-openai}}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{podSelector: {matchLabels: {app: backend}}}]
+      ports: [{protocol: TCP, port: 8080}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: mp-test-backend-to-stub, namespace: aem}
+spec:
+  podSelector: {matchLabels: {app: backend}}
+  policyTypes: [Egress]
+  egress:
+    - to: [{podSelector: {matchLabels: {app: stub-openai}}}]
+      ports: [{protocol: TCP, port: 8080}]

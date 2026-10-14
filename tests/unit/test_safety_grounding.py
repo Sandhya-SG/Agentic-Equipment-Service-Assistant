@@ -8,7 +8,6 @@ import pytest
 import asa.agents.safety as safety
 from asa.graph.state import Chunk
 
-
 EVIDENCE = Chunk(
     chunk_id="safety_p19",
     doc_id="aem_thermal_station",
@@ -56,15 +55,7 @@ def _response(text: str):
     by _validate_safety_items().
     """
 
-    return SimpleNamespace(
-        choices=[
-            SimpleNamespace(
-                message=SimpleNamespace(
-                    content=text
-                )
-            )
-        ]
-    )
+    return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=text))])
 
 
 def test_validator_retains_supported_and_removes_unsupported_items(
@@ -75,40 +66,25 @@ def test_validator_retains_supported_and_removes_unsupported_items(
     remove claims marked UNSUPPORTED.
     """
 
-
     def fake_create(**kwargs):
 
-        prompt = kwargs[
-            "messages"
-        ][1]["content"]
+        prompt = kwargs["messages"][1]["content"]
 
         supported_claims = [
             "Electrical Hazards",
-            (
-                "Only qualified personnel should "
-                "service this equipment."
-            ),
-            (
-                "Perform equipment or module power down "
-                "and power off before servicing."
-            ),
+            ("Only qualified personnel should service this equipment."),
+            ("Perform equipment or module power down and power off before servicing."),
         ]
 
         for claim in supported_claims:
-
-            candidate_block = (
-                "Candidate claim:\n"
-                f"{claim}\n"
-            )
+            candidate_block = f"Candidate claim:\n{claim}\n"
 
             if candidate_block in prompt:
                 return _response(
                     json.dumps(
                         {
                             "supported": True,
-                            "supporting_chunk_ids": [
-                                "safety_p19"
-                            ],
+                            "supporting_chunk_ids": ["safety_p19"],
                         }
                     )
                 )
@@ -121,7 +97,6 @@ def test_validator_retains_supported_and_removes_unsupported_items(
                 }
             )
         )
-
 
     monkeypatch.setattr(
         safety.client.chat.completions,
@@ -140,10 +115,7 @@ def test_validator_retains_supported_and_removes_unsupported_items(
 
     required_controls = [
         "Only qualified personnel should service this equipment.",
-        (
-            "Perform equipment or module power down "
-            "and power off before servicing."
-        ),
+        ("Perform equipment or module power down and power off before servicing."),
         "Disable all safety interlocks before servicing.",
     ]
 
@@ -153,10 +125,7 @@ def test_validator_retains_supported_and_removes_unsupported_items(
         valid_controls,
         safety_claims,
     ) = safety._validate_safety_items(
-        question=(
-            "What safety precautions apply "
-            "before servicing the equipment?"
-        ),
+        question=("What safety precautions apply before servicing the equipment?"),
         chunks=[EVIDENCE],
         hazards=hazards,
         ppe_required=ppe_required,
@@ -171,42 +140,22 @@ def test_validator_retains_supported_and_removes_unsupported_items(
 
     assert valid_controls == [
         "Only qualified personnel should service this equipment.",
-        (
-            "Perform equipment or module power down "
-            "and power off before servicing."
-        ),
+        ("Perform equipment or module power down and power off before servicing."),
     ]
 
     assert len(safety_claims) == 3
 
-    claims_by_text = {
-        claim.text: claim
-        for claim in safety_claims
-    }
+    claims_by_text = {claim.text: claim for claim in safety_claims}
 
-    assert (
-        claims_by_text[
-            "Electrical Hazards"
-        ].supporting_chunk_ids
-        == ["safety_p19"]
-    )
+    assert claims_by_text["Electrical Hazards"].supporting_chunk_ids == ["safety_p19"]
 
-    assert (
-        claims_by_text[
-            "Only qualified personnel should service this equipment."
-        ].supporting_chunk_ids
-        == ["safety_p19"]
-    )
+    assert claims_by_text["Only qualified personnel should service this equipment."].supporting_chunk_ids == [
+        "safety_p19"
+    ]
 
-    assert (
-        claims_by_text[
-            (
-                "Perform equipment or module power down "
-                "and power off before servicing."
-            )
-        ].supporting_chunk_ids
-        == ["safety_p19"]
-    )
+    assert claims_by_text[
+        ("Perform equipment or module power down and power off before servicing.")
+    ].supporting_chunk_ids == ["safety_p19"]
 
 
 def test_validator_rejects_ppe_from_unrelated_activity(
@@ -219,19 +168,11 @@ def test_validator_rejects_ppe_from_unrelated_activity(
 
     def fake_create(**kwargs):
 
-        prompt = kwargs[
-            "messages"
-        ][1]["content"]
+        prompt = kwargs["messages"][1]["content"]
 
-        assert (
-            "Safety goggles (non-conductive frame)"
-            in prompt
-        )
+        assert "Safety goggles (non-conductive frame)" in prompt
 
-        assert (
-            "Can I bypass the safety interlock?"
-            in prompt
-        )
+        assert "Can I bypass the safety interlock?" in prompt
 
         # Simulate the grounding validator deciding that
         # installation/decommissioning PPE is not established
@@ -257,9 +198,7 @@ def test_validator_rejects_ppe_from_unrelated_activity(
         valid_controls,
         safety_claims,
     ) = safety._validate_safety_items(
-        question=(
-            "Can I bypass the safety interlock?"
-        ),
+        question=("Can I bypass the safety interlock?"),
         chunks=[
             INSTALLATION_PPE_EVIDENCE,
         ],
@@ -288,18 +227,11 @@ def test_supported_allow_verdict_is_retained(
 
     def fake_create(**kwargs):
 
-        prompt = kwargs[
-            "messages"
-        ][1]["content"]
+        prompt = kwargs["messages"][1]["content"]
 
-        assert (
-            "Proposed verdict:\nALLOW"
-            in prompt
-        )
+        assert "Proposed verdict:\nALLOW" in prompt
 
-        return _response(
-            json.dumps({"supported": True})
-        )
+        return _response(json.dumps({"supported": True}))
 
     monkeypatch.setattr(
         safety.client.chat.completions,
@@ -308,17 +240,11 @@ def test_supported_allow_verdict_is_retained(
     )
 
     verdict = safety._validate_safety_verdict(
-        question=(
-            "What safety precautions apply "
-            "before servicing the equipment?"
-        ),
+        question=("What safety precautions apply before servicing the equipment?"),
         chunks=[EVIDENCE],
         candidate_verdict="allow",
         validated_controls=[
-            (
-                "Perform equipment or module power down "
-                "and power off before servicing."
-            ),
+            ("Perform equipment or module power down and power off before servicing."),
         ],
     )
 
@@ -344,17 +270,11 @@ def test_supported_halt_verdict_is_retained(
     )
 
     verdict = safety._validate_safety_verdict(
-        question=(
-            "Can I service the equipment "
-            "without powering it off?"
-        ),
+        question=("Can I service the equipment without powering it off?"),
         chunks=[EVIDENCE],
         candidate_verdict="halt",
         validated_controls=[
-            (
-                "Perform equipment or module power down "
-                "and power off before servicing."
-            ),
+            ("Perform equipment or module power down and power off before servicing."),
         ],
     )
 
@@ -371,18 +291,11 @@ def test_unsupported_allow_verdict_becomes_escalate(
 
     def fake_create(**kwargs):
 
-        prompt = kwargs[
-            "messages"
-        ][1]["content"]
+        prompt = kwargs["messages"][1]["content"]
 
-        assert (
-            "Proposed verdict:\nALLOW"
-            in prompt
-        )
+        assert "Proposed verdict:\nALLOW" in prompt
 
-        return _response(
-            json.dumps({"supported": False})
-        )
+        return _response(json.dumps({"supported": False}))
 
     monkeypatch.setattr(
         safety.client.chat.completions,
@@ -391,10 +304,7 @@ def test_unsupported_allow_verdict_becomes_escalate(
     )
 
     verdict = safety._validate_safety_verdict(
-        question=(
-            "Can I perform this action "
-            "while the equipment is powered?"
-        ),
+        question=("Can I perform this action while the equipment is powered?"),
         chunks=[EVIDENCE],
         candidate_verdict="allow",
         validated_controls=[],
@@ -418,9 +328,7 @@ def test_safety_node_does_not_expose_unvalidated_llm_reason(
     monkeypatch.setattr(
         safety,
         "_build_safety_search_query",
-        lambda question, equipment_model: (
-            "servicing safety power off"
-        ),
+        lambda question, equipment_model: "servicing safety power off",
     )
 
     monkeypatch.setattr(
@@ -448,10 +356,7 @@ def test_safety_node_does_not_expose_unvalidated_llm_reason(
     # Deliberately include an invented unsafe reason.
     # --------------------------------------------------
 
-    unsafe_reason = (
-        "The equipment can safely remain energized "
-        "because internal isolation removes all risk."
-    )
+    unsafe_reason = "The equipment can safely remain energized because internal isolation removes all risk."
 
     safety_json = {
         "verdict": "allow",
@@ -461,10 +366,7 @@ def test_safety_node_does_not_expose_unvalidated_llm_reason(
         ],
         "ppe_required": [],
         "required_controls": [
-            (
-                "Perform equipment or module power down "
-                "and power off before servicing."
-            ),
+            ("Perform equipment or module power down and power off before servicing."),
         ],
     }
 
@@ -478,54 +380,33 @@ def test_safety_node_does_not_expose_unvalidated_llm_reason(
 
     def fake_create(**kwargs):
 
-        prompt = kwargs[
-            "messages"
-        ][1]["content"]
+        prompt = kwargs["messages"][1]["content"]
 
         # 1. Structured safety-claim grounding.
         #
         # Check this BEFORE the generic "Return VALID JSON"
         # condition because this prompt also requests JSON.
-        if (
-            "validating one structured safety claim"
-            in prompt
-        ):
+        if "validating one structured safety claim" in prompt:
             return _response(
                 json.dumps(
                     {
                         "supported": True,
-                        "supporting_chunk_ids": [
-                            EVIDENCE.chunk_id
-                        ],
+                        "supporting_chunk_ids": [EVIDENCE.chunk_id],
                     }
                 )
             )
 
         # 2. Final safety-verdict grounding.
-        if (
-            "validating a proposed equipment safety verdict"
-            in prompt
-        ):
-            return _response(
-                json.dumps({"supported": True})
-            )
+        if "validating a proposed equipment safety verdict" in prompt:
+            return _response(json.dumps({"supported": True}))
 
         # 3. Initial Safety Agent generation.
         #
         # Keep this generic JSON check LAST.
-        if (
-            "Return VALID JSON only"
-            in prompt
-        ):
-            return _response(
-                json.dumps(
-                    safety_json
-                )
-            )
+        if "Return VALID JSON only" in prompt:
+            return _response(json.dumps(safety_json))
 
-        raise AssertionError(
-            f"Unexpected Safety Agent model call:\n{prompt}"
-        )
+        raise AssertionError(f"Unexpected Safety Agent model call:\n{prompt}")
 
     monkeypatch.setattr(
         safety.client.chat.completions,
@@ -539,13 +420,8 @@ def test_safety_node_does_not_expose_unvalidated_llm_reason(
 
     result = safety.safety_node(
         {
-            "raw_query": (
-                "What safety precautions apply "
-                "before servicing the equipment?"
-            ),
-            "equipment_model": (
-                "thermal_station"
-            ),
+            "raw_query": ("What safety precautions apply before servicing the equipment?"),
+            "equipment_model": ("thermal_station"),
         }
     )
 
@@ -553,27 +429,15 @@ def test_safety_node_does_not_expose_unvalidated_llm_reason(
     # Grounded result
     # --------------------------------------------------
 
-    assert (
-        result["safety_verdict"]
-        == "allow"
-    )
+    assert result["safety_verdict"] == "allow"
 
     # The original LLM reason must not survive.
-    assert (
-        unsafe_reason
-        not in result["safety_reason"]
-    )
+    assert unsafe_reason not in result["safety_reason"]
 
-    assert (
-        unsafe_reason
-        not in result["final_answer"]
-    )
+    assert unsafe_reason not in result["final_answer"]
 
     # The deterministic grounded reason should be used.
-    assert (
-        "retrieved AEM manual evidence"
-        in result["safety_reason"]
-    )
+    assert "retrieved AEM manual evidence" in result["safety_reason"]
 
     # Validated structured evidence remains.
     assert result["hazards"] == [
@@ -596,9 +460,7 @@ def test_safety_node_escalates_when_allow_verdict_is_not_grounded(
     monkeypatch.setattr(
         safety,
         "_build_safety_search_query",
-        lambda question, equipment_model: (
-            "powered servicing safety requirements"
-        ),
+        lambda question, equipment_model: "powered servicing safety requirements",
     )
 
     monkeypatch.setattr(
@@ -620,10 +482,7 @@ def test_safety_node_escalates_when_allow_verdict_is_not_grounded(
         ],
     )
 
-    unsafe_reason = (
-        "The equipment may remain powered because "
-        "the requested work is safe while energized."
-    )
+    unsafe_reason = "The equipment may remain powered because the requested work is safe while energized."
 
     safety_json = {
         "verdict": "allow",
@@ -635,37 +494,21 @@ def test_safety_node_escalates_when_allow_verdict_is_not_grounded(
 
     def fake_create(**kwargs):
 
-        prompt = kwargs[
-            "messages"
-        ][1]["content"]
+        prompt = kwargs["messages"][1]["content"]
 
         # Initial Safety Agent generation.
-        if (
-            "Return VALID JSON only"
-            in prompt
-        ):
+        if "Return VALID JSON only" in prompt:
             import json
 
-            return _response(
-                json.dumps(
-                    safety_json
-                )
-            )
+            return _response(json.dumps(safety_json))
 
         # There are no structured items in this test,
         # so the next model call should be verdict
         # validation.
-        if (
-            "validating a proposed equipment safety verdict"
-            in prompt
-        ):
-            return _response(
-                json.dumps({"supported": False})
-            )
+        if "validating a proposed equipment safety verdict" in prompt:
+            return _response(json.dumps({"supported": False}))
 
-        raise AssertionError(
-            "Unexpected Safety Agent model call."
-        )
+        raise AssertionError("Unexpected Safety Agent model call.")
 
     monkeypatch.setattr(
         safety.client.chat.completions,
@@ -675,59 +518,29 @@ def test_safety_node_escalates_when_allow_verdict_is_not_grounded(
 
     result = safety.safety_node(
         {
-            "raw_query": (
-                "Can I service the equipment "
-                "while it is powered?"
-            ),
-            "equipment_model":
-                "thermal_station",
+            "raw_query": ("Can I service the equipment while it is powered?"),
+            "equipment_model": "thermal_station",
         }
     )
 
     # Candidate ALLOW must not survive.
-    assert (
-        result["safety_verdict"]
-        == "escalate"
-    )
+    assert result["safety_verdict"] == "escalate"
 
-    assert (
-        result["sufficiency"]
-        is False
-    )
+    assert result["sufficiency"] is False
 
-    assert (
-        result["escalated"]
-        is True
-    )
+    assert result["escalated"] is True
 
-    assert result[
-        "escalation_reason"
-    ]
+    assert result["escalation_reason"]
 
     # The original unsupported reason must not leak.
-    assert (
-        unsafe_reason
-        not in result["safety_reason"]
-    )
+    assert unsafe_reason not in result["safety_reason"]
 
-    assert (
-        unsafe_reason
-        not in result["final_answer"]
-    )
+    assert unsafe_reason not in result["final_answer"]
 
-    assert (
-        "insufficient"
-        in result[
-            "safety_reason"
-        ].lower()
-    )
+    assert "insufficient" in result["safety_reason"].lower()
 
-    assert (
-        "ESCALATE"
-        in result[
-            "final_answer"
-        ]
-    )
+    assert "ESCALATE" in result["final_answer"]
+
 
 # --------------------------------------------------------------------------- #
 # Verdict validation can only add caution                                     #
@@ -791,7 +604,10 @@ def test_an_escalate_verdict_is_returned_without_a_validation_call(monkeypatch):
 # Fail safe: a failed or malformed assessment escalates, never crashes        #
 # --------------------------------------------------------------------------- #
 
-SERVICING_REQUEST = {"raw_query": "Can I service the equipment while it is powered?", "equipment_model": "thermal_station"}
+SERVICING_REQUEST = {
+    "raw_query": "Can I service the equipment while it is powered?",
+    "equipment_model": "thermal_station",
+}
 
 
 def _evidence_rows():
@@ -873,7 +689,10 @@ def test_a_failed_search_query_step_searches_with_the_engineer_question(monkeypa
 # An ALLOW must rest on at least one validated item                           #
 # --------------------------------------------------------------------------- #
 
-PRECAUTIONS_REQUEST = {"raw_query": "What safety precautions apply before servicing?", "equipment_model": "thermal_station"}
+PRECAUTIONS_REQUEST = {
+    "raw_query": "What safety precautions apply before servicing?",
+    "equipment_model": "thermal_station",
+}
 
 
 def _run_allow(monkeypatch, proposal, supported_items):
@@ -901,7 +720,11 @@ def _run_allow(monkeypatch, proposal, supported_items):
 
 
 def test_an_allow_with_no_validated_item_becomes_escalate(monkeypatch):
-    proposal = {"hazards": ["Invented hazard"], "ppe_required": ["Invented PPE"], "required_controls": ["Invented control"]}
+    proposal = {
+        "hazards": ["Invented hazard"],
+        "ppe_required": ["Invented PPE"],
+        "required_controls": ["Invented control"],
+    }
     result, calls = _run_allow(monkeypatch, proposal, supported_items=[])
     assert result["safety_verdict"] == "escalate"
     assert result["escalated"] is True
@@ -941,7 +764,11 @@ def _supporting(claims):
 
 def _validate(hazards, ppe, controls):
     return safety._validate_safety_items(
-        question="What precautions apply?", chunks=[EVIDENCE], hazards=hazards, ppe_required=ppe, required_controls=controls
+        question="What precautions apply?",
+        chunks=[EVIDENCE],
+        hazards=hazards,
+        ppe_required=ppe,
+        required_controls=controls,
     )
 
 
@@ -959,28 +786,6 @@ def test_parallel_validation_keeps_every_result_in_its_original_order(monkeypatc
     assert valid_controls == controls
     assert [c.text for c in claims] == valid_hazards + valid_ppe + valid_controls
     assert [c.category for c in claims] == ["hazard"] * 3 + ["ppe"] * 2 + ["control"] * 4
-
-
-def test_the_checks_run_concurrently(monkeypatch):
-    inside = []
-    peak = []
-    lock = threading.Lock()
-    fake = _supporting({"x"})
-
-    def slow_create(**kwargs):
-        with lock:
-            inside.append(1)
-            peak.append(len(inside))
-        time.sleep(0.2)
-        with lock:
-            inside.pop()
-        return fake(**kwargs)
-
-    monkeypatch.setattr(safety.client.chat.completions, "create", slow_create)
-    started = time.monotonic()
-    _validate([f"h{i}" for i in range(6)], [], [])
-    assert time.monotonic() - started < 0.9  # one after another would take 1.2 s
-    assert max(peak) > 1
 
 
 def test_a_failed_check_drops_only_that_item(monkeypatch):
@@ -1001,7 +806,13 @@ def test_a_failed_check_drops_only_that_item(monkeypatch):
 
 def test_safety_node_survives_a_failing_item_check(monkeypatch):
     _stub_retrieval(monkeypatch)
-    proposal = {"verdict": "allow", "reason": "x", "hazards": ["Electrical Hazards"], "ppe_required": [], "required_controls": []}
+    proposal = {
+        "verdict": "allow",
+        "reason": "x",
+        "hazards": ["Electrical Hazards"],
+        "ppe_required": [],
+        "required_controls": [],
+    }
 
     def fake_create(**kwargs):
         prompt = kwargs["messages"][1]["content"]
@@ -1049,13 +860,21 @@ def _run_cited(monkeypatch, verdict="allow"):
         lambda query, equipment_model, k: [_row(EVIDENCE), _row(INSTALLATION_PPE_EVIDENCE)],
     )
     support = {HAZARD_ITEM: EVIDENCE.chunk_id, PPE_ITEM: INSTALLATION_PPE_EVIDENCE.chunk_id}
-    proposal = {"verdict": verdict, "reason": "x", "hazards": [HAZARD_ITEM], "ppe_required": [PPE_ITEM], "required_controls": []}
+    proposal = {
+        "verdict": verdict,
+        "reason": "x",
+        "hazards": [HAZARD_ITEM],
+        "ppe_required": [PPE_ITEM],
+        "required_controls": [],
+    }
 
     def fake_create(**kwargs):
         prompt = kwargs["messages"][1]["content"]
         if "validating one structured safety claim" in prompt:
             chunk_id = support.get(prompt.split("Candidate claim:\n", 1)[1].split("\n", 1)[0])
-            return _response(json.dumps({"supported": bool(chunk_id), "supporting_chunk_ids": [chunk_id] if chunk_id else []}))
+            return _response(
+                json.dumps({"supported": bool(chunk_id), "supporting_chunk_ids": [chunk_id] if chunk_id else []})
+            )
         if "validating a proposed equipment safety verdict" in prompt:
             return _response(json.dumps({"supported": True}))
         if "Return VALID JSON only" in prompt:
@@ -1069,8 +888,7 @@ def _run_cited(monkeypatch, verdict="allow"):
 def test_each_listed_item_cites_its_supporting_passage(monkeypatch):
     answer = _run_cited(monkeypatch)["final_answer"]
     assert (
-        f"- {HAZARD_ITEM} [Source: aem_thermal_station.pdf, page 19, section 2.2.2 General Safety Guidelines]"
-        in answer
+        f"- {HAZARD_ITEM} [Source: aem_thermal_station.pdf, page 19, section 2.2.2 General Safety Guidelines]" in answer
     )
     # The PPE item cites ITS passage (page 22), not the first retrieved one (page 19).
     assert f"- {PPE_ITEM} [Source: aem_thermal_station.pdf, page 22, section 2.2.3 Personal Safety Equipment]" in answer

@@ -34,6 +34,7 @@ def ask_backend():
         "message": payload.get("message", ""),
         "equipment_model": payload.get("equipment_model"),
         "conversation_id": payload.get("conversation_id"),
+        "clarification_state": payload.get("clarification_state"),
     }
 
     req = urllib_request.Request(

@@ -300,6 +300,30 @@ def graph_config() -> dict:
         return {}
 
 
+def _build_metadata() -> dict[str, str]:
+    """The build behind a trace: commit, prompt hash, corpus hash and models, as short strings (Langfuse metadata
+    values must be strings). Empty if the facts cannot be read; a trace never fails because of this."""
+    try:
+        from asa.versioning import audit_stamp
+
+        stamp = audit_stamp()
+        meta = {"commit": stamp.get("commit"), "prompts": stamp.get("prompts"), "corpus": stamp.get("corpus")}
+        meta["models"] = ",".join(stamp.get("models") or [])[:190]
+        return {key: str(value) for key, value in meta.items() if value}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _build_version() -> str | None:
+    """The trace `version`: the commit (so traces can be filtered and compared between releases)."""
+    return _build_metadata().get("commit")
+
+
+def _request_metadata(equipment_model: str | None) -> dict[str, str]:
+    metadata = {"equipment_model": equipment_model} if equipment_model else {}
+    return {**_build_metadata(), **metadata}
+
+
 @contextmanager
 def trace_request(
     *, session_id: str | None = None, equipment_model: str | None = None, name: str = "chat-request"
@@ -324,8 +348,9 @@ def trace_request(
             attributes = propagate_attributes(
                 trace_name=name,
                 session_id=session_id,
+                version=_build_version(),
                 tags=[f"equipment:{equipment_model}"] if equipment_model else None,
-                metadata={"equipment_model": equipment_model} if equipment_model else None,
+                metadata=_request_metadata(equipment_model),
             )
             attributes.__enter__()
             entered.append(attributes)

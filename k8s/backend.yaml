@@ -1,16 +1,20 @@
 apiVersion: apps/v1
-kind: Deployment
+# A StatefulSet, not a Deployment: every replica keeps its own audit log on its own persistent volume, under a
+# stable name (backend-0, backend-1). A restart or a new image therefore continues the same hash-chained audit file
+# instead of starting an empty one (a Deployment pod's logs lived in an emptyDir and went with the pod).
+kind: StatefulSet
 metadata:
   name: backend
   namespace: aem
   labels: {app: backend, app.kubernetes.io/part-of: aem-service-assistant}
 spec:
   replicas: 2
+  serviceName: backend                         # the Service below
+  podManagementPolicy: Parallel                # replicas start and stop together; their volumes are independent
   selector:
     matchLabels: {app: backend}
-  strategy:
-    type: RollingUpdate
-    rollingUpdate: {maxSurge: 1, maxUnavailable: 0}   # never drop below the desired ready pods
+  updateStrategy:
+    type: RollingUpdate                        # one pod at a time, highest number first, each must be ready before the next
   template:
     metadata:
       labels: {app: backend}
@@ -23,6 +27,8 @@ spec:
         runAsNonRoot: true
         runAsUser: 10001
         runAsGroup: 10001
+        fsGroup: 10001                           # the persistent volume is writable by the non-root user
+        fsGroupChangePolicy: OnRootMismatch
         seccompProfile: {type: RuntimeDefault}
       terminationGracePeriodSeconds: 60          # let in-flight (slow) agent requests finish
       # Chroma's SQLite store needs write access even to read (lock/WAL files), so the index baked into
@@ -53,6 +59,12 @@ spec:
             - name: OPENAI_API_KEY
               valueFrom:
                 secretKeyRef: {name: aem-secrets, key: OPENAI_API_KEY}
+            - name: CLARIFICATION_SECRET            # signs the clarification state the client sends back; the same on every pod
+              valueFrom:
+                secretKeyRef: {name: aem-secrets, key: CLARIFICATION_SECRET, optional: true}
+            - name: VERSION_TOKEN                   # protects GET /version; without it the endpoint is off here
+              valueFrom:
+                secretKeyRef: {name: aem-secrets, key: VERSION_TOKEN, optional: true}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true            # writable paths are the mounted volumes below
@@ -81,13 +93,22 @@ spec:
             - {name: tmp, mountPath: /tmp}
             - {name: chroma, mountPath: /app/chroma_store}
       volumes:
-        # Demo: audit logs live as long as the pod. A real deployment ships them to a durable store.
-        - name: logs
-          emptyDir: {sizeLimit: 500Mi}
         - name: tmp
           emptyDir: {sizeLimit: 200Mi}
         - name: chroma
           emptyDir: {sizeLimit: 100Mi}
+  # One volume per replica (logs-backend-0, logs-backend-1) for the audit, metrics and feedback logs. They are kept
+  # when a pod is deleted or the set is scaled down. In a real deployment, ship them to a durable store as well.
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+  volumeClaimTemplates:
+    - metadata:
+        name: logs
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests: {storage: 1Gi}
 ---
 apiVersion: v1
 kind: Service

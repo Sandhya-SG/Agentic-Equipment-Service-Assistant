@@ -1088,7 +1088,11 @@ document
                                     || null,
 
                                 conversation_id:
-                                    conversationId
+                                    conversationId,
+
+                                clarification_state:
+                                    chat.clarification_state
+                                    || null
                             }
                         )
                     }
@@ -1104,6 +1108,21 @@ document
                     chat.conversation_id = (
                         data.conversation_id
                     );
+                }
+
+                // The signed clarification state travels with the conversation, so any backend pod can
+                // continue it. A clarification sets it; an answer, a halt or an escalation ends it; a blocked
+                // or failed request leaves it as it was (the backend keeps the clarification pending then too).
+                if (data.status === "clarification") {
+                    chat.clarification_state = (
+                        data.clarification_state || null
+                    );
+                } else if (
+                    ["ok", "halted", "escalated"].includes(
+                        data.status
+                    )
+                ) {
+                    chat.clarification_state = null;
                 }
 
                 chat.messages.push(

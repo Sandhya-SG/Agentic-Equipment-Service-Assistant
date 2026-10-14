@@ -17,6 +17,7 @@ services:
       OLLAMA_TIMEOUT: ${OLLAMA_TIMEOUT:-30}
       OLLAMA_MAX_RETRIES: ${OLLAMA_MAX_RETRIES:-2}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      CLARIFICATION_SECRET: ${CLARIFICATION_SECRET:-}
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
       # Inside the container "localhost" is the container itself, so reach the host-side Langfuse by name.

@@ -649,18 +649,19 @@ def test_format_retrieval_context_numbers_evidence_with_citation_fields(monkeypa
     assert f"Equipment: {EQUIPMENT}" in text
 
 
-def test_get_client_is_lazy_and_cached(monkeypatch):
-    """The OpenAI client is only built on first use (so import/construct needs no key) and then reused."""
-    created = []
-    monkeypatch.setattr(rag, "OpenAI", lambda api_key=None: created.append(api_key) or object())
+def test_get_client_is_the_shared_lazy_client(monkeypatch):
+    """The agent uses the shared client of asa.components.llm: constructing the agent and asking for the client
+    creates no OpenAI client (no key needed); the real one is built on the first call, by the shared module."""
+    from asa.components import llm
+
+    llm.reset_client()
     monkeypatch.setattr(rag, "AEMHybridRetriever", lambda *a, **k: FakeRetriever())
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-fake")
     agent = rag.AgenticRAGAgent()
 
-    assert created == []
-    first = agent._get_client()
-    assert agent._get_client() is first
-    assert created == ["sk-fake"]
+    assert llm._real_client is None
+    assert agent._get_client() is llm.client
+    assert agent._get_client() is agent._get_client()
+    assert llm._real_client is None  # still nothing created
 
 
 # ----------------------------------------------------------------------
