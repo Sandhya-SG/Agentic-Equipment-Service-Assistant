@@ -322,6 +322,7 @@ def emit_metrics(run_id: str, final_state: dict, latency_s: float) -> dict:
         "hazard_count",
         "confidence_level",
         "explained",
+        "llm_usage",
     ):
         if key in final_state:
             metrics[key] = final_state[key]
@@ -374,6 +375,15 @@ def confidence_level(confidence: float) -> str:
     return "high"
 
 
+def _as_int(value) -> int:
+    """A count from a log record; anything that is not a whole number counts as 0 (a damaged record must not break
+    the summary)."""
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _rate(count: int, total: int) -> float:
     return round(count / total, 3) if total else 0.0
 
@@ -415,6 +425,11 @@ def monitoring_summary(limit: int | None = None) -> dict:
             helpful_by_level[level][1] += 1
             helpful_by_level[level][0] += 1 if f.get("helpful") else 0
 
+    usages = [m["llm_usage"] for m in metrics if isinstance(m.get("llm_usage"), dict)]
+    tokens_in = sum(_as_int(u.get("input_tokens")) for u in usages)
+    tokens_out = sum(_as_int(u.get("output_tokens")) for u in usages)
+    calls = sum(_as_int(u.get("calls")) for u in usages)
+
     return {
         "runs": n,
         "status_counts": dict(statuses),
@@ -433,7 +448,22 @@ def monitoring_summary(limit: int | None = None) -> dict:
         "helpful_rate": round(helpful / len(feedback), 3) if feedback else None,
         "helpful_rate_by_confidence": {k: _rate(v[0], v[1]) for k, v in helpful_by_level.items()},
         "by_equipment": dict(collections.Counter(m.get("equipment_model") or "none" for m in metrics)),
+        # Cost: the model calls and tokens of the requests that were measured (blocked requests make no call).
+        "llm_runs_measured": len(usages),
+        "avg_model_calls": round(calls / len(usages), 2) if usages else None,
+        "avg_input_tokens": round(tokens_in / len(usages)) if usages else None,
+        "avg_output_tokens": round(tokens_out / len(usages)) if usages else None,
+        "total_input_tokens": tokens_in,
+        "total_output_tokens": tokens_out,
+        "estimated_cost_usd": _estimated_cost(tokens_in, tokens_out) if usages else None,
     }
+
+
+def _estimated_cost(tokens_in: int, tokens_out: int) -> float:
+    """Dollars at gpt-4o-mini prices, the model most calls use: an estimate for watching the trend, not a bill."""
+    from asa.components.llm import estimate_cost
+
+    return round(estimate_cost("gpt-4o-mini", tokens_in, tokens_out), 4)
 
 
 # Alert thresholds (PRD 10.3: error spikes, low-confidence surges, safety-block anomalies).
@@ -444,12 +474,14 @@ DEFAULT_ALERT_THRESHOLDS = {
     "blocked_rate": 0.30,
     "escalation_rate": 0.50,
     "low_confidence_rate": 0.40,
+    "avg_input_tokens": 20000,  # per request; about 6,500 in the measured question set, 15,000 for the heaviest
 }
 _ALERT_RULES = (
     ("unavailable_rate", "critical", "Error spike: too many requests could not be answered"),
     ("blocked_rate", "warning", "Safety-block anomaly: many requests blocked by the input guard"),
     ("escalation_rate", "warning", "Escalation surge: many requests escalated to a human"),
     ("low_confidence_rate", "warning", "Low-confidence surge: many answers below the confidence floor"),
+    ("avg_input_tokens", "warning", "Token-cost surge: the average request uses many input tokens"),
 )
 
 
