@@ -8,7 +8,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-from asa.components.llm import client, rag_agent
+from asa.components.llm import client, rag_agent, run_parallel
 from asa.components.tracing import llm_name
 from asa.graph.state import (
     AgentState,
@@ -122,13 +122,11 @@ def _validate_diagnostic_claims(
 
     chunk_map = {chunk.chunk_id: chunk for chunk in chunks}
 
-    valid_causes = []
-
-    for cause in candidate_causes:
+    def cause_is_supported(cause: RankedCause) -> bool:
         evidence = [chunk_map[chunk_id] for chunk_id in cause.supporting_chunk_ids if chunk_id in chunk_map]
 
         if not evidence:
-            continue
+            return False
 
         evidence_text = "\n\n".join(chunk.text for chunk in evidence)
 
@@ -187,16 +185,13 @@ UNSUPPORTED
         # An empty or unusable reply is not SUPPORTED: the claim is dropped.
         verdict = _reply_text(response).upper()
 
-        if verdict == "SUPPORTED":
-            valid_causes.append(cause)
+        return verdict == "SUPPORTED"
 
-    valid_steps = []
-
-    for step in troubleshooting_steps:
+    def step_is_supported(step: Step) -> bool:
         evidence = [chunk_map[chunk_id] for chunk_id in step.supporting_chunk_ids if chunk_id in chunk_map]
 
         if not evidence:
-            continue
+            return False
 
         evidence_text = "\n\n".join(chunk.text for chunk in evidence)
 
@@ -253,12 +248,19 @@ UNSUPPORTED
         # An empty or unusable reply is not SUPPORTED: the claim is dropped.
         verdict = _reply_text(response).upper()
 
-        if verdict == "SUPPORTED":
-            valid_steps.append(step)
+        return verdict == "SUPPORTED"
+
+    # Every claim is validated against its own evidence, so the calls are independent: run them at the same time.
+    outcomes = run_parallel(
+        [lambda cause=cause: cause_is_supported(cause) for cause in candidate_causes]
+        + [lambda step=step: step_is_supported(step) for step in troubleshooting_steps]
+    )
+    cause_outcomes = outcomes[: len(candidate_causes)]
+    step_outcomes = outcomes[len(candidate_causes) :]
 
     return (
-        valid_causes,
-        valid_steps,
+        [cause for cause, supported in zip(candidate_causes, cause_outcomes) if supported],
+        [step for step, supported in zip(troubleshooting_steps, step_outcomes) if supported],
     )
 
 

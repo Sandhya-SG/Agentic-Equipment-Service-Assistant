@@ -158,6 +158,7 @@ def compare(before: dict, after: dict) -> list[str]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--out", help="write the numbers to this file")
+    parser.add_argument("--only", help="comma-separated question ids to run (default: all), to keep a check cheap")
     parser.add_argument("--compare", nargs=2, metavar=("BEFORE", "AFTER"), help="compare two saved reports")
     args = parser.parse_args(argv)
 
@@ -168,7 +169,11 @@ def main(argv: list[str] | None = None) -> int:
 
     from asa.versioning import build_info
 
-    rows = run_questions(load_questions())
+    questions = load_questions()
+    if args.only:
+        wanted = {name.strip() for name in args.only.split(",")}
+        questions = [q for q in questions if q["id"] in wanted]
+    rows = run_questions(questions)
     total = aggregate(rows)
     print_summary(total)
     if args.out:

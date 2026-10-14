@@ -327,6 +327,26 @@ def get_client() -> LazyOpenAI:
 
 
 # ---------------------------------------------------------------------------
+# Concurrent calls
+# ---------------------------------------------------------------------------
+
+
+def run_parallel(tasks: list, max_workers: int = 6) -> list:
+    """Run independent tasks concurrently and return their results in task order.
+
+    Each task runs in a copy of the caller's context, so the request's token budget and the tracing context carry
+    over to the worker threads. The first exception raised by a task is raised here, as it would be one by one.
+    """
+    if not tasks:
+        return []
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=min(max_workers, len(tasks))) as pool:
+        futures = [pool.submit(contextvars.copy_context().run, task) for task in tasks]
+        return [future.result() for future in futures]
+
+
+# ---------------------------------------------------------------------------
 # Shared RAG agent
 # ---------------------------------------------------------------------------
 

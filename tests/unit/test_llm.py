@@ -407,3 +407,75 @@ def test_the_spend_script_shows_adds_and_resets(ledger, monkeypatch, capsys):
     assert "CAP REACHED" in capsys.readouterr().out
     script.main(["--reset"])
     assert "$0.0000" in capsys.readouterr().out
+
+
+# --- run_parallel and the diagnostic validation that uses it ---
+
+
+def test_run_parallel_keeps_the_order_and_runs_at_the_same_time():
+    import time
+
+    started = time.monotonic()
+    results = llm.run_parallel([lambda i=i: (time.sleep(0.2), i)[1] for i in range(6)])
+    assert results == list(range(6))
+    assert time.monotonic() - started < 0.8  # one after another would take 1.2 s
+
+
+def test_run_parallel_raises_the_first_error_and_handles_no_tasks():
+    def boom():
+        raise ValueError("first")
+
+    assert llm.run_parallel([]) == []
+    with pytest.raises(ValueError, match="first"):
+        llm.run_parallel([lambda: 1, boom, lambda: 3])
+
+
+def test_run_parallel_carries_the_request_budget_into_the_workers():
+    with llm.request_budget(limit=0) as counter:
+        llm.run_parallel([ask for _ in range(5)])
+    assert counter["calls"] == 5
+
+
+def test_the_diagnostic_validation_runs_all_claims_at_once_and_keeps_their_order(monkeypatch):
+    import threading
+    import time
+    from types import SimpleNamespace as NS
+
+    from asa.agents import diagnostic
+    from asa.graph.state import Chunk, RankedCause, Step
+
+    chunk = Chunk(
+        chunk_id="c1",
+        doc_id="d",
+        section_id="s",
+        revision="0",
+        equipment_model="thermal_station",
+        text="evidence",
+        score=1.0,
+        source_file="f.pdf",
+        page=1,
+        section_title="t",
+    )
+    causes = [RankedCause(cause=f"cause {i}", likelihood=0.5, supporting_chunk_ids=["c1"]) for i in range(4)]
+    steps = [Step(order=i, action=f"check {i}", supporting_chunk_ids=["c1"]) for i in range(4)]
+    unsupported = [RankedCause(cause="no evidence", likelihood=0.5, supporting_chunk_ids=["missing"])]
+    inside, peak, lock = [], [], threading.Lock()
+
+    def create(**kwargs):
+        text = kwargs["messages"][1]["content"]
+        with lock:
+            inside.append(1)
+            peak.append(len(inside))
+        time.sleep(0.15)
+        with lock:
+            inside.pop()
+        odd = any(f"{word} {n}" in text for word in ("cause", "check") for n in (1, 3))
+        return NS(choices=[NS(message=NS(content="UNSUPPORTED" if odd else "SUPPORTED"))])
+
+    monkeypatch.setattr(diagnostic.client.chat.completions, "create", create)
+    started = time.monotonic()
+    valid_causes, valid_steps = diagnostic._validate_diagnostic_claims("symptom", [chunk], causes + unsupported, steps)
+    assert time.monotonic() - started < 0.7  # 8 calls one after another would take 1.2 s
+    assert max(peak) > 1
+    assert [c.cause for c in valid_causes] == ["cause 0", "cause 2"]
+    assert [s.action for s in valid_steps] == ["check 0", "check 2"]
