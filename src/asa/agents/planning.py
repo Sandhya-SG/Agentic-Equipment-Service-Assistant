@@ -32,37 +32,20 @@ def planning_node(
     # Guard: Planner should only receive READY requests
     # --------------------------------------------------
 
-    request_status = state.get(
-        "request_status"
-    )
+    request_status = state.get("request_status")
 
     if request_status != "READY":
+        raise ValueError("Planning Agent received a request that is not READY.")
 
-        raise ValueError(
-            "Planning Agent received a request "
-            "that is not READY."
-        )
+    question = (state.get("resolved_query") or state.get("raw_query") or "").strip()
 
-    question = (
-        state.get("resolved_query")
-        or state.get("raw_query")
-        or ""
-    ).strip()
-
-    equipment_model = (
-        state.get("equipment_model")
-        or ""
-    ).strip()
+    equipment_model = (state.get("equipment_model") or "").strip()
 
     if not question:
-        raise ValueError(
-            "Planning Agent requires a query."
-        )
+        raise ValueError("Planning Agent requires a query.")
 
     if not equipment_model:
-        raise ValueError(
-            "Planning Agent requires equipment_model."
-        )
+        raise ValueError("Planning Agent requires equipment_model.")
 
     prompt = f"""
 You are the Planning Agent for an AEM
@@ -193,11 +176,7 @@ REASON: <one brief reason>
         temperature=0,
     )
 
-    decision = (
-        response.choices[0]
-        .message.content
-        .strip()
-    )
+    decision = response.choices[0].message.content.strip()
 
     # --------------------------------------------------
     # Conservative default
@@ -205,22 +184,13 @@ REASON: <one brief reason>
 
     selected = "safety"
 
-    reason = (
-        "Planner output could not be parsed; "
-        "routing conservatively to Safety."
-    )
+    reason = "Planner output could not be parsed; routing conservatively to Safety."
 
     for line in decision.splitlines():
-
         line = line.strip()
 
         if line.startswith("PLAN:"):
-
-            value = (
-                line.split(":", 1)[1]
-                .strip()
-                .upper()
-            )
+            value = line.split(":", 1)[1].strip().upper()
 
             if value == "SAFETY":
                 selected = "safety"
@@ -232,34 +202,19 @@ REASON: <one brief reason>
                 selected = "agentic_rag"
 
         elif line.startswith("REASON:"):
+            reason = line.split(":", 1)[1].strip()
 
-            reason = (
-                line.split(":", 1)[1]
-                .strip()
-            )
+    print(f"Selected specialist: {selected}")
 
-    print(
-        f"Selected specialist: {selected}"
-    )
-
-    print(
-        f"Planning reason: {reason}"
-    )
+    print(f"Planning reason: {reason}")
 
     return {
-        "plan": [
-            selected
-        ],
-
-        "current_step":
-            selected,
-
-        "planning_reason":
-            reason,
-
-        "iteration_count":
-            state.get(
-                "iteration_count",
-                0,
-            ) + 1,
+        "plan": [selected],
+        "current_step": selected,
+        "planning_reason": reason,
+        "iteration_count": state.get(
+            "iteration_count",
+            0,
+        )
+        + 1,
     }

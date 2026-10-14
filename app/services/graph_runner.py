@@ -80,25 +80,19 @@ def run_graph(
     recorded in `state["trace"]` (the audit trail and the interface show which agents ran).
     The agents themselves are not changed.
     """
-    
+
     initial = new_state(
         raw_query=message,
         equipment_model=equipment_model,
     )
 
     if clarification_response is not None:
-        initial["clarification_response"] = (
-            clarification_response
-        )
+        initial["clarification_response"] = clarification_response
 
     if resolved_query is not None:
-        initial["resolved_query"] = (
-            resolved_query
-        )
+        initial["resolved_query"] = resolved_query
 
-    initial["clarification_count"] = (
-        clarification_count
-    )
+    initial["clarification_count"] = clarification_count
 
     trace: list[TraceEvent] = []
     final = None

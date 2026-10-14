@@ -20,9 +20,7 @@ from asa.graph.state import (
 load_dotenv()
 
 
-
 DIAGNOSTIC_MODEL = "gpt-4o-mini"
-
 
 
 def _reply_text(response: Any) -> str:

@@ -33,6 +33,7 @@ rag_agent = llm.rag_agent
 # Real Agentic RAG node
 # ---------------------------------------------------------------------------
 
+
 def agentic_rag_node(
     state: AgentState,
 ) -> dict:
@@ -43,26 +44,15 @@ def agentic_rag_node(
 
     print("\n[Agentic RAG Node]")
 
-    question = (
-        state.get("resolved_query")
-        or state.get("raw_query")
-        or ""
-    ).strip()
+    question = (state.get("resolved_query") or state.get("raw_query") or "").strip()
 
-    equipment_model = (
-        state.get("equipment_model")
-        or ""
-    ).strip()
+    equipment_model = (state.get("equipment_model") or "").strip()
 
     if not question:
-        raise ValueError(
-            "Agentic RAG node requires a query."
-        )
+        raise ValueError("Agentic RAG node requires a query.")
 
     if not equipment_model:
-        raise ValueError(
-            "Agentic RAG node requires equipment_model."
-        )
+        raise ValueError("Agentic RAG node requires equipment_model.")
 
     result = rag_agent.run(
         question=question,
@@ -86,47 +76,29 @@ def agentic_rag_node(
         for item in result["results"]
     ]
 
-    sufficient = (
-        result["retrieval_status"]
-        == "GOOD"
-    )
+    sufficient = result["retrieval_status"] == "GOOD"
 
     return {
-        "retrieval_strategy":
-            "hybrid",
-
-        "retrieved_chunks":
-            retrieved_chunks,
-
-        "sufficiency":
-            sufficient,
-
-        "retry_count":
-            max(
-                result["retrieval_attempts"] - 1,
-                0,
-            ),
-
-        "escalated":
-            result.get(
-                "escalation_required",
-                False,
-            ),
-
-        "escalation_reason":
-            result.get(
-                "senior_reason"
-            )
-            or "",
-
-        "final_answer":
-            result["answer"],
+        "retrieval_strategy": "hybrid",
+        "retrieved_chunks": retrieved_chunks,
+        "sufficiency": sufficient,
+        "retry_count": max(
+            result["retrieval_attempts"] - 1,
+            0,
+        ),
+        "escalated": result.get(
+            "escalation_required",
+            False,
+        ),
+        "escalation_reason": result.get("senior_reason") or "",
+        "final_answer": result["answer"],
     }
 
 
 # ---------------------------------------------------------------------------
 # Graph
 # ---------------------------------------------------------------------------
+
 
 def build_service_graph():
     """
@@ -140,9 +112,7 @@ def build_service_graph():
                        -> Safety stub
     """
 
-    graph = StateGraph(
-        AgentState
-    )
+    graph = StateGraph(AgentState)
 
     graph.add_node(
         "request",
@@ -178,11 +148,8 @@ def build_service_graph():
         "request",
         route_after_request,
         {
-            "planning":
-                "planning",
-
-            "clarify":
-                END,
+            "planning": "planning",
+            "clarify": END,
         },
     )
 
@@ -190,14 +157,9 @@ def build_service_graph():
         "planning",
         route_after_planning,
         {
-            "agentic_rag":
-                "agentic_rag",
-
-            "diagnostic":
-                "diagnostic",
-
-            "safety":
-                "safety",
+            "agentic_rag": "agentic_rag",
+            "diagnostic": "diagnostic",
+            "safety": "safety",
         },
     )
 

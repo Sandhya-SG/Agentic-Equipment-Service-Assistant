@@ -28,58 +28,31 @@ def request_node(
 
     print("\n[Request Agent]")
 
-    question = (
-        state.get("resolved_query")
-        or state.get("raw_query")
-        or ""
-    ).strip()
+    question = (state.get("resolved_query") or state.get("raw_query") or "").strip()
 
-    is_clarification_continuation = bool(
-        state.get("resolved_query")
-    )
+    is_clarification_continuation = bool(state.get("resolved_query"))
 
-    equipment_model = (
-        state.get("equipment_model")
-        or ""
-    ).strip()
+    equipment_model = (state.get("equipment_model") or "").strip()
 
-    print(
-        f"Engineer request: {question}"
-    )
+    print(f"Engineer request: {question}")
 
-    print(
-        f"Equipment model: "
-        f"{equipment_model or 'NOT SELECTED'}"
-    )
+    print(f"Equipment model: {equipment_model or 'NOT SELECTED'}")
 
     # --------------------------------------------------
     # Deterministic equipment gate
     # --------------------------------------------------
 
     if not equipment_model:
+        clarification = "Please select the equipment model before continuing."
 
-        clarification = (
-            "Please select the equipment model "
-            "before continuing."
-        )
+        print("Request status: CLARIFY")
 
-        print(
-            "Request status: CLARIFY"
-        )
-
-        print(
-            f"Clarification question: "
-            f"{clarification}"
-        )
+        print(f"Clarification question: {clarification}")
 
         return {
-            "request_status":
-                "CLARIFY",
-
+            "request_status": "CLARIFY",
             "clarification_needed": True,
-
-            "clarification_question":
-                clarification,
+            "clarification_question": clarification,
         }
 
     # --------------------------------------------------
@@ -87,30 +60,16 @@ def request_node(
     # --------------------------------------------------
 
     if not question:
+        clarification = "Please describe the equipment-service question or issue you need help with."
 
-        clarification = (
-            "Please describe the equipment-service "
-            "question or issue you need help with."
-        )
+        print("Request status: CLARIFY")
 
-        print(
-            "Request status: CLARIFY"
-        )
-
-        print(
-            f"Clarification question: "
-            f"{clarification}"
-        )
+        print(f"Clarification question: {clarification}")
 
         return {
-            "request_status":
-                "CLARIFY",
-
-            "clarification_needed":
-                True,
-
-            "clarification_question":
-                clarification,
+            "request_status": "CLARIFY",
+            "clarification_needed": True,
+            "clarification_question": clarification,
         }
 
     # --------------------------------------------------
@@ -350,30 +309,17 @@ QUESTION: <one concise clarification question>
         temperature=0,
     )
 
-    decision = (
-        response.choices[0]
-        .message.content
-        .strip()
-    )
+    decision = response.choices[0].message.content.strip()
 
     status = "CLARIFY"
 
-    clarification_question = (
-        "Please provide more detail about "
-        "the equipment-service request."
-    )
+    clarification_question = "Please provide more detail about the equipment-service request."
 
     for line in decision.splitlines():
-
         line = line.strip()
 
         if line.startswith("STATUS:"):
-
-            value = (
-                line.split(":", 1)[1]
-                .strip()
-                .upper()
-            )
+            value = line.split(":", 1)[1].strip().upper()
 
             if value in {
                 "READY",
@@ -382,17 +328,9 @@ QUESTION: <one concise clarification question>
                 status = value
 
         elif line.startswith("QUESTION:"):
+            value = line.split(":", 1)[1].strip()
 
-            value = (
-                line.split(":", 1)[1]
-                .strip()
-            )
-
-            if (
-                value
-                and value.upper()
-                != "NONE"
-            ):
+            if value and value.upper() != "NONE":
                 clarification_question = value
 
     # --------------------------------------------------
@@ -400,27 +338,15 @@ QUESTION: <one concise clarification question>
     # --------------------------------------------------
 
     if status == "READY":
-
         clarification_question = None
 
-    print(
-        f"Request status: {status}"
-    )
+    print(f"Request status: {status}")
 
     if clarification_question:
-
-        print(
-            "Clarification question: "
-            f"{clarification_question}"
-        )
+        print(f"Clarification question: {clarification_question}")
 
     return {
-        "request_status":
-            status,
-
-        "clarification_needed":
-            status == "CLARIFY",
-
-        "clarification_question":
-            clarification_question,
+        "request_status": status,
+        "clarification_needed": status == "CLARIFY",
+        "clarification_question": clarification_question,
     }
