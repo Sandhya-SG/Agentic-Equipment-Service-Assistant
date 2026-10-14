@@ -4,13 +4,11 @@ from __future__ import annotations
 
 import json
 import math
-import os
 from typing import Any
 
 from dotenv import load_dotenv
-from openai import OpenAI
 
-from asa.agents.rag import AgenticRAGAgent
+from asa.components.llm import client, rag_agent
 from asa.components.tracing import llm_name
 from asa.graph.state import (
     AgentState,
@@ -22,11 +20,9 @@ from asa.graph.state import (
 load_dotenv()
 
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 DIAGNOSTIC_MODEL = "gpt-4o-mini"
 
-rag_agent = AgenticRAGAgent()
 
 
 def _reply_text(response: Any) -> str:

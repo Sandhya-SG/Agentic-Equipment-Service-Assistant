@@ -10,26 +10,23 @@ from langgraph.graph import (
 
 from asa.agents.diagnostic import diagnostic_node
 from asa.agents.planning import planning_node
-from asa.agents.rag import AgenticRAGAgent
 from asa.agents.request import request_node
 from asa.agents.safety import safety_node
-
+from asa.components import llm
 from asa.graph.routing import (
     route_after_planning,
     route_after_request,
 )
-
 from asa.graph.state import (
     AgentState,
     Chunk,
 )
 
-
 # ---------------------------------------------------------------------------
 # Specialist instances
 # ---------------------------------------------------------------------------
 
-rag_agent = AgenticRAGAgent()
+rag_agent = llm.rag_agent
 
 
 # ---------------------------------------------------------------------------

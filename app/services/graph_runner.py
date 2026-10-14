@@ -10,6 +10,7 @@ import time
 from datetime import datetime, timezone
 from functools import lru_cache
 
+from asa.components.llm import get_rag_agent, request_budget
 from asa.components.tracing import graph_config, instrument_openai
 from asa.graph.state import AgentState, TraceEvent, new_state
 
@@ -29,10 +30,13 @@ _TRACE_DETAIL_KEYS = (
 
 @lru_cache(maxsize=1)
 def _graph():
-    # Must run before the agents are imported: they do `from openai import OpenAI`.
+    # Must run before the first model call: the shared client looks `openai.OpenAI` up when it is created.
     instrument_openai()
     from asa.graph.orchestrator import service_graph
 
+    # The agents are created lazily; load the retriever (embedding model and index) now so that
+    # "ready" still means "can answer" and the first user request does not pay for it.
+    get_rag_agent()
     return service_graph
 
 
@@ -99,22 +103,25 @@ def run_graph(
     trace: list[TraceEvent] = []
     final = None
     previous = time.monotonic()
-    for mode, chunk in _graph().stream(initial, config=graph_config(), stream_mode=["updates", "values"]):
-        if mode == "updates":
-            now = time.monotonic()
-            duration_ms = int((now - previous) * 1000)
-            previous = now
-            for node, update in chunk.items():
-                trace.append(
-                    TraceEvent(
-                        agent=node,
-                        action="completed",
-                        timestamp=datetime.now(timezone.utc).isoformat(),
-                        detail=_trace_detail(update, duration_ms),
+    graph = _graph()
+    # One token budget per user request: a runaway loop of model calls stops instead of spending without limit.
+    with request_budget():
+        for mode, chunk in graph.stream(initial, config=graph_config(), stream_mode=["updates", "values"]):
+            if mode == "updates":
+                now = time.monotonic()
+                duration_ms = int((now - previous) * 1000)
+                previous = now
+                for node, update in chunk.items():
+                    trace.append(
+                        TraceEvent(
+                            agent=node,
+                            action="completed",
+                            timestamp=datetime.now(timezone.utc).isoformat(),
+                            detail=_trace_detail(update, duration_ms),
+                        )
                     )
-                )
-        elif mode == "values":
-            final = chunk
+            elif mode == "values":
+                final = chunk
     if final is None:
         raise RuntimeError("the agent graph produced no state")
     state = dict(final)

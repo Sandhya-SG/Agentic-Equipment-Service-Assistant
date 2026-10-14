@@ -2,21 +2,15 @@
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 from dotenv import load_dotenv
-from openai import OpenAI
 
+from asa.components.llm import client
 from asa.components.tracing import llm_name
-
 
 load_dotenv()
 
-
-client = OpenAI(
-    api_key=os.getenv("OPENAI_API_KEY")
-)
 
 PLANNER_MODEL = "gpt-4o-mini"
 

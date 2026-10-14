@@ -5,14 +5,12 @@ from __future__ import annotations
 import contextvars
 import json
 import logging
-import os
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable
 
 from dotenv import load_dotenv
-from openai import OpenAI
 
-from asa.agents.rag import AgenticRAGAgent
+from asa.components.llm import client, rag_agent
 from asa.components.tracing import llm_name
 from asa.graph.state import (
     AgentState,
@@ -24,14 +22,7 @@ from asa.guardrails.safety_rules import check_defeat_request, check_text
 load_dotenv()
 
 
-client = OpenAI(
-    api_key=os.getenv("OPENAI_API_KEY"),
-    _enforce_credentials=False,
-)
-
 SAFETY_MODEL = "gpt-4o-mini"
-
-rag_agent = AgenticRAGAgent()
 
 logger = logging.getLogger(__name__)
 
