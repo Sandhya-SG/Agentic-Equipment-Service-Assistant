@@ -482,6 +482,7 @@ def _handle_chat(message: str, conversation_id: str, equipment_model: str | None
         "requires_human_review": safety.requires_human_review,
         "escalation_reason": escalation_reason,
         "output_guard": {"action": output.action, "findings": list(output.findings)},
+        "llm_usage": state.get("llm_usage"),
         "answer_sha256": hashlib.sha256(answer.encode("utf-8")).hexdigest(),
         "trace_summary": [step.agent for step in trace],
     }

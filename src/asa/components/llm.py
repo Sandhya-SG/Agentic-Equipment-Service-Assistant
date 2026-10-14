@@ -24,7 +24,9 @@ import contextlib
 import contextvars
 import logging
 import os
+import sys
 import threading
+import time
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -58,6 +60,7 @@ def _env_int(name: str, default: int) -> int:
 # Per-request token budget
 # ---------------------------------------------------------------------------
 
+_usage_lock = threading.Lock()
 _budget: contextvars.ContextVar[dict | None] = contextvars.ContextVar("openai_token_budget", default=None)
 
 
@@ -65,11 +68,12 @@ _budget: contextvars.ContextVar[dict | None] = contextvars.ContextVar("openai_to
 def request_budget(limit: int | None = None):
     """Track the tokens used by every model call made inside this block (one user request).
 
-    Yields the counter dict (`limit`, `used`, `calls`). A limit of 0 or less means no limit.
+    Yields the counter dict (`limit`, `used`, `calls`, `input`, `output`, and `detail`: one entry per call with its
+    name, model, input and output tokens and seconds). A limit of 0 or less means no limit.
     """
     if limit is None:
         limit = _env_int("OPENAI_REQUEST_TOKEN_BUDGET", DEFAULT_REQUEST_TOKEN_BUDGET)
-    counter = {"limit": limit, "used": 0, "calls": 0}
+    counter = {"limit": limit, "used": 0, "calls": 0, "input": 0, "output": 0, "detail": []}
     token = _budget.set(counter)
     try:
         yield counter
@@ -83,15 +87,44 @@ def _check_budget() -> None:
         raise TokenBudgetExceeded(f"request token budget of {counter['limit']} used up after {counter['calls']} calls")
 
 
-def _record_usage(response: Any) -> None:
+def _record_usage(response: Any, label: str, model: Any, seconds: float) -> None:
     counter = _budget.get()
     if counter is None:
         return
-    counter["calls"] += 1
     usage = getattr(response, "usage", None)
     total = getattr(usage, "total_tokens", None)
-    if isinstance(total, int):
-        counter["used"] += total
+    prompt = getattr(usage, "prompt_tokens", None)
+    completion = getattr(usage, "completion_tokens", None)
+    with _usage_lock:
+        counter["calls"] += 1
+        if isinstance(total, int):
+            counter["used"] += total
+        if isinstance(prompt, int):
+            counter["input"] += prompt
+        if isinstance(completion, int):
+            counter["output"] += completion
+        counter["detail"].append(
+            {
+                "call": label,
+                "model": model if isinstance(model, str) else None,
+                "input": prompt if isinstance(prompt, int) else None,
+                "output": completion if isinstance(completion, int) else None,
+                "seconds": round(seconds, 3),
+            }
+        )
+
+
+def _caller_label(kwargs: dict) -> str:
+    """What to call this model call in the usage record: the Langfuse generation name if the caller gave one,
+    else the module and function that made it (`request.request_node`)."""
+    name = kwargs.get("name")
+    if isinstance(name, str) and name:
+        return name
+    try:
+        frame = sys._getframe(2)
+        return f"{frame.f_globals.get('__name__', '?').rsplit('.', 1)[-1]}.{frame.f_code.co_name}"
+    except (AttributeError, ValueError):
+        return "unknown"
 
 
 # ---------------------------------------------------------------------------
@@ -145,8 +178,10 @@ class _Completions:
             cap = _env_int("OPENAI_MAX_OUTPUT_TOKENS", DEFAULT_MAX_OUTPUT_TOKENS)
             if cap > 0:
                 kwargs["max_completion_tokens"] = cap
+        label = _caller_label(kwargs)
+        started = time.monotonic()
         response = _get_real_client().chat.completions.create(*args, **kwargs)
-        _record_usage(response)
+        _record_usage(response, label, kwargs.get("model"), time.monotonic() - started)
         return response
 
 

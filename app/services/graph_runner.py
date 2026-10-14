@@ -99,7 +99,7 @@ def run_graph(
     previous = time.monotonic()
     graph = _graph()
     # One token budget per user request: a runaway loop of model calls stops instead of spending without limit.
-    with request_budget():
+    with request_budget() as usage:
         for mode, chunk in graph.stream(initial, config=graph_config(), stream_mode=["updates", "values"]):
             if mode == "updates":
                 now = time.monotonic()
@@ -120,4 +120,10 @@ def run_graph(
         raise RuntimeError("the agent graph produced no state")
     state = dict(final)
     state["trace"] = trace
+    state["llm_usage"] = {
+        "calls": usage["calls"],
+        "input_tokens": usage["input"],
+        "output_tokens": usage["output"],
+    }
+    state["llm_calls"] = list(usage["detail"])
     return state

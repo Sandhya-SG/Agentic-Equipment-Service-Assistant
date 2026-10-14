@@ -28,7 +28,9 @@ class FakeOpenAI:
 
     def _create(self, *args, **kwargs):
         self.calls.append(kwargs)
-        return SimpleNamespace(usage=SimpleNamespace(total_tokens=FakeOpenAI.tokens_per_call))
+        total = FakeOpenAI.tokens_per_call
+        usage = SimpleNamespace(total_tokens=total, prompt_tokens=total - 10, completion_tokens=10)
+        return SimpleNamespace(usage=usage)
 
 
 @pytest.fixture(autouse=True)
@@ -225,3 +227,73 @@ def test_a_spent_budget_surfaces_as_unavailable_not_as_more_spending(monkeypatch
     with pytest.raises(llm.TokenBudgetExceeded):
         graph_runner.run_graph("question", "thermal_station")
     assert len(FakeOpenAI.instances[0].calls) == 3  # 100 + 100 + 100 tokens, then it stops
+
+
+# --- what every call used: agent, model, input and output tokens, seconds ---
+
+
+def test_every_call_is_recorded_with_its_name_model_tokens_and_time():
+    with llm.request_budget(limit=0) as counter:
+        llm.client.chat.completions.create(model="gpt-4o-mini", messages=[], name="assess-retrieval")
+    assert counter["calls"] == 1 and counter["input"] == 90 and counter["output"] == 10 and counter["used"] == 100
+    [entry] = counter["detail"]
+    assert entry["call"] == "assess-retrieval" and entry["model"] == "gpt-4o-mini"
+    assert entry["input"] == 90 and entry["output"] == 10 and entry["seconds"] >= 0
+
+
+def test_a_call_without_a_name_is_labelled_with_the_module_and_function_that_made_it():
+    def request_node():
+        return llm.client.chat.completions.create(model="m", messages=[])
+
+    with llm.request_budget(limit=0) as counter:
+        request_node()
+    assert counter["detail"][0]["call"].endswith(".request_node")
+
+
+def test_calls_from_worker_threads_are_all_recorded_once():
+    import contextvars
+    from concurrent.futures import ThreadPoolExecutor
+
+    with llm.request_budget(limit=0) as counter:
+        context = contextvars.copy_context()
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            list(pool.map(lambda _: context.copy().run(ask), range(40)))
+    assert counter["calls"] == 40 and len(counter["detail"]) == 40
+    assert counter["input"] == 40 * 90 and counter["output"] == 400 and counter["used"] == 4000
+
+
+def test_a_response_without_usage_is_counted_as_a_call_with_unknown_tokens(monkeypatch):
+    monkeypatch.setattr(FakeOpenAI, "_create", lambda self, *a, **k: SimpleNamespace(usage=None))
+    llm.reset_client()
+    with llm.request_budget(limit=0) as counter:
+        ask()
+    assert counter["calls"] == 1 and counter["used"] == 0
+    assert counter["detail"][0]["input"] is None
+
+
+def test_run_graph_hands_the_usage_of_the_request_to_the_caller(monkeypatch):
+    from app.services import graph_runner
+
+    class Graph:
+        def stream(self, initial, config=None, stream_mode=None):
+            ask()
+            ask()
+            yield "values", {"request_status": "READY"}
+
+    monkeypatch.setattr(graph_runner, "_graph", lambda: Graph())
+    state = graph_runner.run_graph("question", "thermal_station")
+    assert state["llm_usage"] == {"calls": 2, "input_tokens": 180, "output_tokens": 20}
+    assert len(state["llm_calls"]) == 2
+
+
+def test_the_token_use_of_a_request_reaches_the_audit_record(tmp_path, monkeypatch):
+    import json
+
+    from asa.components import logging_sub
+
+    monkeypatch.setattr(logging_sub, "AUDIT_LOG", tmp_path / "audit.jsonl")
+    monkeypatch.setattr(logging_sub, "LOG_DIR", tmp_path)
+    usage = {"calls": 5, "input_tokens": 5000, "output_tokens": 300}
+    logging_sub.end_run("run1", {"llm_usage": usage})
+    record = json.loads((tmp_path / "audit.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+    assert record["llm_usage"] == usage

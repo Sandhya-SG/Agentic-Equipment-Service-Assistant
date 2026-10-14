@@ -1,0 +1,10 @@
+{"id": "t01", "equipment_model": "thermal_station", "question": "What is the Power OFF procedure for the AEM Thermal Station?", "kind": "procedure"}
+{"id": "t02", "equipment_model": "thermal_station", "question": "What personal protective equipment is required for the AEM Thermal Station?", "kind": "lookup"}
+{"id": "t03", "equipment_model": "thermal_station", "question": "What are the possible causes of thermal activation failures on the AEM Thermal Station?", "kind": "diagnostic"}
+{"id": "t04", "equipment_model": "thermal_station", "question": "The equipment is not reaching the temperature setpoint. What should I check?", "kind": "diagnostic"}
+{"id": "t05", "equipment_model": "thermal_station", "question": "What warning applies to using isopropyl alcohol with the AEM Thermal Station?", "kind": "lookup"}
+{"id": "t06", "equipment_model": "thermal_station", "question": "Can I open the panel while the equipment is powered?", "kind": "safety"}
+{"id": "t07", "equipment_model": "thermal_station", "question": "What safety precautions apply before servicing the thermal head?", "kind": "safety"}
+{"id": "t08", "equipment_model": "thermal_retrofit_1kw", "question": "What is the Lock Out Tag Out procedure for the AEM 1kW Thermal Retrofit System?", "kind": "procedure"}
+{"id": "t09", "equipment_model": "thermal_retrofit_1kw", "question": "What are the possible causes of thermal activation failures on the AEM 1kW Thermal Retrofit System?", "kind": "diagnostic"}
+{"id": "t10", "equipment_model": "thermal_station", "question": "It's not working.", "kind": "clarification"}

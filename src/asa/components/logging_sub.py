@@ -255,6 +255,7 @@ _RUN_END_FIELDS = (
     "confidence_level",
     "explained",
     "output_guard",  # response firewall: the action taken and the finding categories, never the text
+    "llm_usage",  # model calls of the request and their input and output tokens (no text)
     "answer_sha256",
     "error_type",
     "trace_summary",
