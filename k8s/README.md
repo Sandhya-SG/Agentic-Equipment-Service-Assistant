@@ -2,7 +2,7 @@
 
 Runs the backend and frontend on a local Kubernetes cluster (Docker Desktop with the kind provisioner and
 3 nodes, or minikube). It follows the structure of the course reference (`llmapp09`): one namespace, a
-Deployment and a Service per component, probes, and `kubectl port-forward` to reach it.
+Deployment or StatefulSet and a Service per component, probes, and `kubectl port-forward` to reach it.
 
 ## Who uses this
 **Only Sandhya runs the Kubernetes deployment** (on her laptop, for the demo and the scalability evidence). Teammates do not set it up: they run the application with Option A or B and use their own Langfuse, as described in the main [README](../README.md) ("Team quick start"). Ask Sandhya before changing anything under `k8s/` or the Dockerfiles; they carry the security settings (read-only filesystem, network policy, non-root user) that the report documents.
@@ -15,7 +15,7 @@ docker save aem-backend:k8s -o img.tar
 docker exec -i desktop-control-plane ctr -n k8s.io images import --all-platforms - < img.tar
 docker exec -i desktop-worker        ctr -n k8s.io images import --all-platforms - < img.tar
 docker exec -i desktop-worker2       ctr -n k8s.io images import --all-platforms - < img.tar
-kubectl -n aem rollout restart deploy/backend
+kubectl -n aem rollout restart statefulset/backend
 ```
 Same for the frontend with `aem-frontend:k8s`. The `<` redirect works in Git Bash, not in plain PowerShell.
 
@@ -23,9 +23,21 @@ Same for the frontend with `aem-frontend:k8s`. The `<` redirect works in Git Bas
 | Symptom | Cause and fix |
 |---|---|
 | Backend pod `0/1`, restarting | Read `kubectl -n aem logs <pod>`. "attempt to write a readonly database": the `seed-index` init container did not run; reapply with `kubectl apply -k k8s`. Name-resolution errors: see Troubleshooting below |
-| Every answer says "temporarily unavailable" | The secret is missing or wrong: rerun `python scripts/k8s_secret.py`, then `kubectl -n aem rollout restart deploy/backend` |
-| Pods stay `Pending` | Not enough memory in Docker Desktop: raise it, or `kubectl -n aem scale deploy/backend --replicas=1` |
+| Every answer says "temporarily unavailable" | The secret is missing or wrong: rerun `python scripts/k8s_secret.py`, then `kubectl -n aem rollout restart statefulset/backend` |
+| Pods stay `Pending` | Not enough memory in Docker Desktop: raise it, or `kubectl -n aem scale statefulset/backend --replicas=1` |
 | A change is not visible | The image was not imported into the nodes, see above |
+
+## Logs and persistence
+The backend is a StatefulSet: pods are `backend-0` and `backend-1`, and each has its own persistent volume
+(`logs-backend-0`, `logs-backend-1`, 1 Gi, ReadWriteOnce) mounted at `/app/logs` for the audit, metrics and feedback logs.
+The audit log is one hash-chained file per pod (`AUDIT_LOG_PER_INSTANCE=true`), so a pod that restarts or gets a new image
+continues the same file and chain. Deleting a pod or scaling down keeps the volumes (`Retain`); delete them by hand with
+`kubectl -n aem delete pvc logs-backend-1` when a replica is gone for good. Because the volumes are per pod,
+`/api/monitoring` on one pod covers that pod's requests; the volumes are also on the node, so ship the files to a durable
+store for a real deployment. The `chroma` and `tmp` volumes stay `emptyDir`.
+
+Rollout and rollback use `statefulset/backend` (`kubectl -n aem rollout status|history|undo statefulset/backend`); a
+StatefulSet replaces one pod at a time, highest number first, so one pod keeps serving. Verified: about 36 s each way.
 
 ## What is in this folder
 
@@ -34,7 +46,7 @@ Same for the frontend with `aem-frontend:k8s`. The `<` redirect works in Git Bas
 | `namespace.yaml` | Namespace `aem` with the restricted Pod Security level |
 | `configmap.yaml` | Non-secret settings (including `AUDIT_LOG_PER_INSTANCE`, see below) |
 | `secret.example.yaml` | Example only. The real secret is created by `scripts/k8s_secret.py` |
-| `backend.yaml` | Backend Deployment (2 replicas) and Service |
+| `backend.yaml` | Backend **StatefulSet** (2 replicas, one persistent volume each for the logs) and Service |
 | `frontend.yaml` | Frontend Deployment (2 replicas) and Service |
 | `networkpolicy.yaml` | Default-deny network rules: only the frontend reaches the backend, the backend may reach only DNS and port 443 |
 | `hpa.yaml` | Autoscaler for the backend (needs metrics-server) |
@@ -52,18 +64,18 @@ Same for the frontend with `aem-frontend:k8s`. The `<` redirect works in Git Bas
    kubectl apply -f k8s/namespace.yaml
    python scripts/k8s_secret.py
    kubectl apply -k k8s
-   kubectl -n aem rollout status deploy/backend      # the first start takes about a minute
+   kubectl -n aem rollout status statefulset/backend      # the first start takes about a minute
    ```
 4. Open the app:
    ```
    kubectl -n aem port-forward svc/frontend 5000:5000      # then http://localhost:5000
    ```
-5. Watch it: `kubectl -n aem get pods -o wide`, `kubectl -n aem logs deploy/backend`.
+5. Watch it: `kubectl -n aem get pods -o wide`, `kubectl -n aem logs statefulset/backend`.
 6. Remove it: `kubectl delete namespace aem`.
 
 ## Scale it
 ```
-kubectl -n aem scale deploy/backend --replicas=4
+kubectl -n aem scale statefulset/backend --replicas=4
 ```
 For autoscaling, install metrics-server (on kind it needs the `--kubelet-insecure-tls` flag), then `kubectl apply -f k8s/hpa.yaml`.
 

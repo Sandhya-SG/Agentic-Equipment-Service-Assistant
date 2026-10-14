@@ -12,15 +12,15 @@ message each conversation escalated. On one pod that is message 3 every time.
 ```
 kubectl -n aem create configmap mp-test --from-file=scripts/multipod_session_test/stub_openai.py --from-file=scripts/multipod_session_test/session_client.py
 kubectl apply -f scripts/multipod_session_test/stub.yaml
-kubectl -n aem set env deploy/backend OPENAI_BASE_URL=http://stub-openai:8080/v1
-kubectl -n aem rollout status deploy/backend
+kubectl -n aem set env statefulset/backend OPENAI_BASE_URL=http://stub-openai:8080/v1
+kubectl -n aem rollout status statefulset/backend
 kubectl apply -f scripts/multipod_session_test/client-pod.yaml
 kubectl -n aem logs mp-client                         # the SUMMARY line
 
 # clean up (important: the backend must not keep pointing at the stub)
 kubectl -n aem delete pod mp-client stub-openai; kubectl -n aem delete svc stub-openai; kubectl -n aem delete configmap mp-test
 kubectl -n aem delete networkpolicy mp-test-stub mp-test-backend-to-stub
-kubectl -n aem set env deploy/backend OPENAI_BASE_URL-
+kubectl -n aem set env statefulset/backend OPENAI_BASE_URL-
 ```
 
 The pods in the two YAML files use the backend image tag of `k8s/kustomization.yaml` (`aem-backend:2f0cc72`); change it
