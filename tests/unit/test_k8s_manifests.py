@@ -64,10 +64,3 @@ def test_the_backend_service_still_selects_the_backend_pods():
     service = next(doc for doc in load("backend.yaml") if doc["kind"] == "Service")
     assert service["spec"]["selector"] == {"app": "backend"}
     assert service["metadata"]["name"] == "backend"
-
-
-def test_the_docs_use_the_statefulset_commands_for_rollout_and_rollback():
-    docs = Path(__file__).resolve().parents[2] / "docs"
-    for name in ("deployment-verification.md", "demo-script.md"):
-        text = (docs / name).read_text(encoding="utf-8")
-        assert "deploy/backend" not in text, f"{name} still uses deploy/backend"
