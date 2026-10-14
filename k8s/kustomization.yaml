@@ -9,3 +9,11 @@ resources:
   - networkpolicy.yaml
 # The Secret (aem-secrets) is created separately by scripts/k8s_secret.py so no key is in git.
 # hpa.yaml is applied after metrics-server is installed (see k8s/README.md).
+
+# The backend image of this release. It is a per-build tag (the short git commit the image was built from, see
+# docs/deployment-verification.md), so applying this folder again keeps the same version and a rollback has an older
+# tag to go back to. Change newTag when you deploy a new build; `kubectl apply -k k8s` then rolls it out.
+# The frontend keeps its tag because its image does not carry the version information.
+images:
+  - name: aem-backend
+    newTag: 2f0cc72
