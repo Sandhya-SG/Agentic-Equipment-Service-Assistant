@@ -24,6 +24,11 @@ class ChatRequest(BaseModel):
         max_length=64,
         description="Optional conversation identifier",
     )
+    clarification_state: str | None = Field(
+        default=None,
+        max_length=8000,
+        description="Signed state the previous clarification response returned; lets any backend pod continue it",
+    )
     context: str | None = Field(
         default=None,
         max_length=MAX_MESSAGE_CHARS,

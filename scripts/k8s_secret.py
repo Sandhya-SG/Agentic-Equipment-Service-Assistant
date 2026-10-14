@@ -10,6 +10,7 @@ written into the repository. Run it after `kubectl apply -k k8s` has created the
 from __future__ import annotations
 
 import os
+import secrets
 import shutil
 import subprocess
 import sys
@@ -19,7 +20,7 @@ from pathlib import Path
 NAMESPACE = "aem"
 SECRET_NAME = "aem-secrets"
 KEYS = ("OPENAI_API_KEY",)
-OPTIONAL_KEYS = ("VERSION_TOKEN",)  # stored when set in .env or the environment
+OPTIONAL_KEYS = ("VERSION_TOKEN", "CLARIFICATION_SECRET")  # stored when set in .env or the environment
 
 
 def find_kubectl() -> str:
@@ -48,6 +49,10 @@ def main() -> None:
     if missing:
         sys.exit(f"Missing in .env or the environment: {', '.join(missing)}")
 
+    if "CLARIFICATION_SECRET" not in optional:
+        # Every backend pod must sign and check clarification state with the same secret.
+        optional["CLARIFICATION_SECRET"] = secrets.token_urlsafe(32)
+        print("generated a CLARIFICATION_SECRET; put one in .env to keep it the same on later runs")
     values.update(optional)
     kubectl = find_kubectl()
     fd, temp_path = tempfile.mkstemp(suffix=".env")

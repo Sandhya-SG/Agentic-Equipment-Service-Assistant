@@ -23,6 +23,8 @@ from app.services.clarification_store import (
     get_pending,
     set_pending,
 )
+from app.services.clarification_token import issue as issue_clarification_state
+from app.services.clarification_token import verify as verify_clarification_state
 from app.services.graph_runner import run_graph
 from asa.agents.clarification import (
     resolve_clarification,
@@ -209,7 +211,9 @@ def _confidence(explanation: dict | None, state: dict) -> float:
         return 0.0
 
 
-def handle_chat(message: str, conversation_id: str, equipment_model: str | None = None) -> ChatResponse:
+def handle_chat(
+    message: str, conversation_id: str, equipment_model: str | None = None, clarification_state: str | None = None
+) -> ChatResponse:
     """Run one chat request inside a Langfuse trace (a no-op when tracing is off).
 
     The trace input is the redacted question (the raw text never leaves this service) and the
@@ -217,7 +221,7 @@ def handle_chat(message: str, conversation_id: str, equipment_model: str | None 
     """
     with trace_request(session_id=conversation_id, equipment_model=equipment_model) as root:
         root.update(input={"message": logging_sub._redact(message), "equipment_model": equipment_model})
-        response = _handle_chat(message, conversation_id, equipment_model)
+        response = _handle_chat(message, conversation_id, equipment_model, clarification_state)
         root.update(
             output={
                 "status": response.status,
@@ -284,7 +288,20 @@ def _halt_defeat_request(
     )
 
 
-def _handle_chat(message: str, conversation_id: str, equipment_model: str | None = None) -> ChatResponse:
+def _pending_clarification(conversation_id: str, clarification_state: str | None):
+    """The clarification this conversation is waiting on.
+
+    A valid signed token from the client wins: it carries the state itself, so any backend pod can continue the
+    conversation. Without one (or with one that is altered, expired or from another conversation) the state this
+    process remembers is used, as before.
+    """
+    from_client = verify_clarification_state(clarification_state, conversation_id)
+    return from_client if from_client is not None else get_pending(conversation_id)
+
+
+def _handle_chat(
+    message: str, conversation_id: str, equipment_model: str | None = None, clarification_state: str | None = None
+) -> ChatResponse:
     started = time.monotonic()
 
     with observation("detect-prompt-injection", as_type="guardrail") as guard:
@@ -314,7 +331,7 @@ def _handle_chat(message: str, conversation_id: str, equipment_model: str | None
     if defeated_control:
         return _halt_defeat_request(defeated_control, safe_message, conversation_id, equipment_model, started)
 
-    pending = get_pending(conversation_id)
+    pending = _pending_clarification(conversation_id, clarification_state)
 
     clarification_response = None
     resolved_query = None
@@ -360,6 +377,7 @@ def _handle_chat(message: str, conversation_id: str, equipment_model: str | None
         logger.error("chat failed: run_id=%s error=%s: %s", run_id, type(exc).__name__, exc)
         return _unavailable(run_id, conversation_id, equipment_model, started, type(exc).__name__)
 
+    signed_state = None
     status = _agent_status(state)
 
     if status == "clarification" and clarification_count >= MAX_CLARIFICATIONS:
@@ -383,15 +401,15 @@ def _handle_chat(message: str, conversation_id: str, equipment_model: str | None
     elif status == "clarification":
         original_query = pending.original_query if pending is not None else safe_message
 
-        set_pending(
-            conversation_id,
-            PendingClarification(
-                original_query=original_query,
-                clarification_question=(state.get("clarification_question") or ""),
-                equipment_model=equipment_model,
-                clarification_count=clarification_count,
-            ),
+        new_pending = PendingClarification(
+            original_query=original_query,
+            clarification_question=(state.get("clarification_question") or ""),
+            equipment_model=equipment_model,
+            clarification_count=clarification_count,
         )
+        set_pending(conversation_id, new_pending)
+        # The same state, signed, goes back to the client so that any pod can continue the conversation.
+        signed_state = issue_clarification_state(conversation_id, new_pending)
 
     else:
         clear_pending(conversation_id)
@@ -518,4 +536,5 @@ def _handle_chat(message: str, conversation_id: str, equipment_model: str | None
         run_id=run_id,
         trace=trace,
         explanation=explanation,
+        clarification_state=signed_state,
     )

@@ -53,6 +53,9 @@ spec:
             - name: OPENAI_API_KEY
               valueFrom:
                 secretKeyRef: {name: aem-secrets, key: OPENAI_API_KEY}
+            - name: CLARIFICATION_SECRET            # signs the clarification state the client sends back; the same on every pod
+              valueFrom:
+                secretKeyRef: {name: aem-secrets, key: CLARIFICATION_SECRET, optional: true}
             - name: VERSION_TOKEN                   # protects GET /version; without it the endpoint is off here
               valueFrom:
                 secretKeyRef: {name: aem-secrets, key: VERSION_TOKEN, optional: true}
