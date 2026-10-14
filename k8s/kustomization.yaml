@@ -16,6 +16,6 @@ resources:
 # The frontend image is pinned the same way (the commit it was built from), so neither image uses a moving tag.
 images:
   - name: aem-backend
-    newTag: 2f0cc72
+    newTag: 216440f
   - name: aem-frontend
-    newTag: 0c93a9b
+    newTag: 216440f

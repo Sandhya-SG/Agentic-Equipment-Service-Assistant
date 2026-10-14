@@ -24,5 +24,6 @@ kubectl -n aem set env deploy/backend OPENAI_BASE_URL-
 ```
 
 The pods in the two YAML files use the backend image tag of `k8s/kustomization.yaml` (`aem-backend:2f0cc72`); change it
-to the tag you deployed. In Git Bash prefix paths like `/app/logs` with `MSYS_NO_PATHCONV=1`. To test another setting, change the Service or the
+to the tag you deployed. `session_client.py` carries the signed state like the browser does; run it with `CARRY_STATE=0` (an env entry in
+`client-pod.yaml`) to reproduce the original problem. In Git Bash prefix paths like `/app/logs` with `MSYS_NO_PATHCONV=1`. To test another setting, change the Service or the
 replica count and delete `mp-client` before running it again. Results: `docs/deployment-verification.md`.
