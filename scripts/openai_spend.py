@@ -5,8 +5,9 @@
     python scripts/openai_spend.py --reset         # start again from zero
 
 The ledger only counts calls made through the application's shared client (the app and the evaluation scripts). It is
-an estimate (tokens times a price table), not your OpenAI balance: check the usage page of the OpenAI console for the
-real figure, and set a limit there too, because DeepEval and Promptfoo use their own clients.
+a best-effort estimate (tokens times a price table), not a guaranteed financial limit and not your OpenAI balance:
+check the usage page of the OpenAI console for the real figure, and set a limit there too, because DeepEval and
+Promptfoo use their own clients.
 """
 
 from __future__ import annotations
