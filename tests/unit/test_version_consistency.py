@@ -59,6 +59,31 @@ def test_the_version_facts_are_complete_in_this_checkout():
     assert len(info["models"]) >= 6
 
 
+# --- the corpus is the sponsor manuals only ---
+
+
+def test_the_corpus_holds_only_registered_sponsor_manuals():
+    """`DOCUMENT_REGISTRY` lists the sponsor manuals. A PDF in `aem_documents/` that is not in it (for example a
+    synthetic sample document) must fail here, before it can reach the index and the corpus hash. Per BK, no
+    synthetic data is used in development."""
+    from asa.ingestion.metadata import DOCUMENT_REGISTRY
+
+    present = {path.name.lower() for path in (ROOT / "aem_documents").glob("*.pdf")}
+    assert present, "aem_documents/ holds no manuals: the check itself is broken"
+    assert present <= set(DOCUMENT_REGISTRY), f"not sponsor manuals: {sorted(present - set(DOCUMENT_REGISTRY))}"
+
+
+def test_the_corpus_hash_covers_exactly_the_registered_manuals():
+    from asa.ingestion.metadata import DOCUMENT_REGISTRY
+
+    manifest = V.compute_corpus_manifest(ROOT / "aem_documents")
+    assert set(manifest["files"]) == set(DOCUMENT_REGISTRY)
+
+
+def test_the_synthetic_corpus_folder_is_gone():
+    assert not (ROOT / "corpus" / "synthetic").exists()
+
+
 # --- the writers stamp the build ---
 
 
