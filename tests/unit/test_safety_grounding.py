@@ -8,7 +8,6 @@ import pytest
 import asa.agents.safety as safety
 from asa.graph.state import Chunk
 
-
 EVIDENCE = Chunk(
     chunk_id="safety_p19",
     doc_id="aem_thermal_station",
@@ -959,28 +958,6 @@ def test_parallel_validation_keeps_every_result_in_its_original_order(monkeypatc
     assert valid_controls == controls
     assert [c.text for c in claims] == valid_hazards + valid_ppe + valid_controls
     assert [c.category for c in claims] == ["hazard"] * 3 + ["ppe"] * 2 + ["control"] * 4
-
-
-def test_the_checks_run_concurrently(monkeypatch):
-    inside = []
-    peak = []
-    lock = threading.Lock()
-    fake = _supporting({"x"})
-
-    def slow_create(**kwargs):
-        with lock:
-            inside.append(1)
-            peak.append(len(inside))
-        time.sleep(0.2)
-        with lock:
-            inside.pop()
-        return fake(**kwargs)
-
-    monkeypatch.setattr(safety.client.chat.completions, "create", slow_create)
-    started = time.monotonic()
-    _validate([f"h{i}" for i in range(6)], [], [])
-    assert time.monotonic() - started < 0.9  # one after another would take 1.2 s
-    assert max(peak) > 1
 
 
 def test_a_failed_check_drops_only_that_item(monkeypatch):

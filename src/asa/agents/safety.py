@@ -26,8 +26,11 @@ SAFETY_MODEL = "gpt-4o-mini"
 
 logger = logging.getLogger(__name__)
 
-# Per-item evidence checks run concurrently; each item still gets its own model call.
+# Evidence checks run concurrently. Up to MAX_CLAIMS_PER_VALIDATION claims share one model call (the evidence, the
+# bulk of every prompt, is then sent once for the group instead of once per claim); a group that cannot be read
+# falls back to one call per claim.
 MAX_PARALLEL_VALIDATIONS = 6
+MAX_CLAIMS_PER_VALIDATION = 5
 
 SEARCH_K = 5  # passages per search
 MAX_SAFETY_PASSAGES = 6  # passages kept after merging the searches (the evidence in every prompt)
@@ -440,6 +443,114 @@ If unsupported, return:
         # valid retrieved chunk supports it.
         return supported_ids
 
+    def validate_group(group: list[tuple[str, str]]) -> list[list[str] | None]:
+        """Validate several claims in one call. One entry per claim: its supporting chunk ids (empty when the claim
+        is unsupported), or None when the model's answer for that claim is missing or unreadable."""
+
+        numbered = "\n".join(f"{number}. [{item_type}] {item}" for number, (item, item_type) in enumerate(group, 1))
+        prompt = f"""
+You are validating structured safety claims against
+authoritative AEM manual evidence.
+
+Engineer request:
+{question}
+
+Candidate claims, each with a number and its type:
+{numbered}
+
+Retrieved AEM manual evidence:
+{context}
+
+Judge EVERY claim on its own. A claim is supported only if it is BOTH:
+
+1. EXPLICITLY SUPPORTED by the supplied evidence; and
+
+2. APPLICABLE to the engineer's requested activity,
+   condition, or safety question.
+
+If supported, identify ONLY the Chunk IDs of the supplied
+evidence passages that directly support that claim.
+Support for one claim says nothing about another.
+
+Important rules:
+
+Do not convert recommendations into mandatory
+requirements.
+
+Return VALID JSON only in exactly this structure, one
+entry for each claim:
+
+{{
+  "results": [
+    {{
+      "claim": 1,
+      "supported": true | false,
+      "supporting_chunk_ids": [
+        "<chunk_id>"
+      ]
+    }}
+  ]
+}}
+"""
+
+        response = client.chat.completions.create(
+            **llm_name("validate-safety-claims"),
+            model=SAFETY_MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You validate safety claims strictly "
+                        "against supplied AEM manual evidence "
+                        "and return valid JSON."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": prompt,
+                },
+            ],
+            temperature=0,
+            response_format={"type": "json_object"},
+        )
+
+        outcome: list[list[str] | None] = [None] * len(group)
+
+        try:
+            entries = json.loads(response.choices[0].message.content.strip()).get("results")
+        except (json.JSONDecodeError, AttributeError, TypeError):
+            return outcome
+
+        if not isinstance(entries, list):
+            return outcome
+
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+
+            number = entry.get("claim")
+
+            if not isinstance(number, int) or isinstance(number, bool) or not 1 <= number <= len(group):
+                continue
+
+            if outcome[number - 1] is not None:
+                continue  # the first answer for a claim counts
+
+            ids = entry.get("supporting_chunk_ids", [])
+
+            if entry.get("supported") is not True or not isinstance(ids, list):
+                outcome[number - 1] = []
+                continue
+
+            # Trust boundary: only retrieved chunk IDs are accepted.
+            outcome[number - 1] = [
+                chunk_id
+                for position, chunk_id in enumerate(ids)
+                if isinstance(chunk_id, str) and chunk_id in valid_chunk_ids and chunk_id not in ids[:position]
+            ]
+
+        return outcome
+
     def checked(item: str, item_type: str) -> list[str]:
         """Validate one item; a failed check is treated as unsupported, never as a crash."""
         try:
@@ -458,9 +569,30 @@ If unsupported, return:
         for item in items
     ]
 
-    results = _run_parallel(
-        [lambda item=item, item_type=item_type: checked(item, item_type) for item, _, item_type in jobs]
-    )
+    def checked_group(group: list[tuple[str, str]]) -> list[list[str]]:
+        """Validate a group in one call; any claim the call did not answer is validated on its own."""
+
+        answers: list[list[str] | None] = [None] * len(group)
+
+        if len(group) > 1:
+            try:
+                answers = validate_group(group)
+            except Exception as exc:
+                logger.warning("safety claims not validated together, checking one by one: %s", type(exc).__name__)
+
+        return [
+            answer if answer is not None else checked(item, item_type)
+            for answer, (item, item_type) in zip(answers, group)
+        ]
+
+    pairs = [(item, item_type) for item, _, item_type in jobs]
+    groups = [pairs[start : start + MAX_CLAIMS_PER_VALIDATION] for start in range(0, len(pairs), MAX_CLAIMS_PER_VALIDATION)]
+
+    results = [
+        ids
+        for group_ids in _run_parallel([lambda group=group: checked_group(group) for group in groups])
+        for ids in group_ids
+    ]
 
     valid: dict[str, list[str]] = {"hazard": [], "ppe": [], "control": []}
 
