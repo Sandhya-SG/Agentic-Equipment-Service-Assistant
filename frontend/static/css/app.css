@@ -920,3 +920,10 @@ button {
             13px;
     }
 }
+/* Human review banner under an answer */
+.review-banner { margin-top: 12px; padding: 10px 12px; border-radius: 8px; border: 1px solid #c9a227; background: rgba(201, 162, 39, 0.12); }
+.review-banner.confirmed { border-color: #1e7a45; background: rgba(30, 122, 69, 0.12); }
+.review-banner.corrected { border-color: #1f5fbf; background: rgba(31, 95, 191, 0.12); }
+.review-banner.rejected { border-color: #b3261e; background: rgba(179, 38, 30, 0.12); }
+.review-guidance { margin-top: 8px; white-space: pre-wrap; font-weight: 600; }
+.review-sources { margin-top: 6px; font-size: 13px; opacity: 0.85; }

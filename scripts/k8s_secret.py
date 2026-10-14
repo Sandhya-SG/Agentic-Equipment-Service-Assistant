@@ -20,7 +20,11 @@ from pathlib import Path
 NAMESPACE = "aem"
 SECRET_NAME = "aem-secrets"
 KEYS = ("OPENAI_API_KEY",)
-OPTIONAL_KEYS = ("VERSION_TOKEN", "CLARIFICATION_SECRET")  # stored when set in .env or the environment
+OPTIONAL_KEYS = (
+    "VERSION_TOKEN",
+    "CLARIFICATION_SECRET",
+    "REVIEWER_TOKEN",
+)  # stored when set in .env or the environment
 
 
 def find_kubectl() -> str:

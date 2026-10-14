@@ -62,6 +62,9 @@ spec:
             - name: CLARIFICATION_SECRET            # signs the clarification state the client sends back; the same on every pod
               valueFrom:
                 secretKeyRef: {name: aem-secrets, key: CLARIFICATION_SECRET, optional: true}
+            - name: REVIEWER_TOKEN                  # the human review API needs it; without it the endpoints answer 503
+              valueFrom:
+                secretKeyRef: {name: aem-secrets, key: REVIEWER_TOKEN, optional: true}
             - name: VERSION_TOKEN                   # protects GET /version; without it the endpoint is off here
               valueFrom:
                 secretKeyRef: {name: aem-secrets, key: VERSION_TOKEN, optional: true}

@@ -614,6 +614,70 @@ function removeLoadingMessage() {
 }
 
 
+// Human review: when the assistant sent the answer to a qualified reviewer, the engineer sees that it is pending and
+// then the outcome. The wording is to be approved by the subject-matter expert.
+const REVIEW_TEXT = {
+    pending: "This answer is pending review by a qualified engineer. Do not rely on it until it is confirmed.",
+    confirmed: "Reviewed and confirmed by a qualified engineer.",
+    corrected: "Reviewed by a qualified engineer, who corrected this guidance:",
+    rejected: "A qualified engineer reviewed this answer and withdrew it. Please escalate to your supervisor."
+};
+
+function showReviewOutcome(banner, view) {
+    banner.className = "review-banner " + view.status;
+    banner.textContent = view.message || REVIEW_TEXT[view.status] || "";
+
+    if (view.status === "corrected" && view.corrected_guidance) {
+        banner.appendChild(el("div", "review-guidance", view.corrected_guidance));
+
+        if (view.evidence && view.evidence.length) {
+            banner.appendChild(el("div", "review-sources", "Sources: " + view.evidence.join("; ")));
+        }
+    } else if (view.status === "rejected" && view.reason) {
+        banner.appendChild(el("div", "review-sources", "Reason: " + view.reason));
+    }
+}
+
+function addReviewBanner(card, data) {
+    const review = data.review;
+
+    if (!review || !review.review_id) {
+        return;
+    }
+
+    const banner = el("div", "review-banner pending", REVIEW_TEXT.pending);
+
+    card.appendChild(banner);
+
+    let attempts = 0;
+
+    const poll = async () => {
+        attempts += 1;
+
+        try {
+            const res = await fetch("/api/review/status/" + encodeURIComponent(review.review_id));
+
+            if (res.ok) {
+                const view = await res.json();
+
+                if (view.status && view.status !== "pending") {
+                    showReviewOutcome(banner, view);
+                    return;
+                }
+            }
+        } catch (error) {
+            // try again on the next round
+        }
+
+        if (attempts < 120) {
+            setTimeout(poll, 10000);
+        }
+    };
+
+    setTimeout(poll, 3000);
+}
+
+
 function addResponseIndicators(
     card,
     data,
@@ -750,6 +814,11 @@ function appendAssistantMessage(
     }
 
     addEvidenceDetails(
+        card,
+        data
+    );
+
+    addReviewBanner(
         card,
         data
     );

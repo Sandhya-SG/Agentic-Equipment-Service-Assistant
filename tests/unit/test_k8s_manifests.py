@@ -64,3 +64,26 @@ def test_the_backend_service_still_selects_the_backend_pods():
     service = next(doc for doc in load("backend.yaml") if doc["kind"] == "Service")
     assert service["spec"]["selector"] == {"app": "backend"}
     assert service["metadata"]["name"] == "backend"
+
+
+def test_the_review_token_comes_from_the_secret_and_is_optional(backend):
+    container = next(c for c in backend["spec"]["template"]["spec"]["containers"] if c["name"] == "backend")
+    env = {e["name"]: e for e in container["env"]}
+    assert env["REVIEWER_TOKEN"]["valueFrom"]["secretKeyRef"]["key"] == "REVIEWER_TOKEN"
+    assert env["REVIEWER_TOKEN"]["valueFrom"]["secretKeyRef"]["optional"] is True  # unset: the review API answers 503
+
+
+def test_the_review_token_is_never_in_a_manifest_or_the_compose_file_as_a_value():
+    root = K8S.parent
+    for name in ("k8s/backend.yaml", "k8s/configmap.yaml", "docker-compose.yml"):
+        text = (root / name).read_text(encoding="utf-8")
+        for line in text.splitlines():
+            if "REVIEWER_TOKEN" in line and ":" in line and "${REVIEWER_TOKEN" not in line:
+                assert "secretKeyRef" in line or line.strip().startswith(("#", "- name:")), line
+    example = (K8S / "secret.example.yaml").read_text(encoding="utf-8")
+    assert 'REVIEWER_TOKEN: "replace-me"' in example
+
+
+def test_the_secret_script_can_store_the_review_token():
+    script = (K8S.parent / "scripts" / "k8s_secret.py").read_text(encoding="utf-8")
+    assert "REVIEWER_TOKEN" in script

@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Expert review - Equipment Service Assistant</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/review.css') }}">
+</head>
+<body>
+<header class="bar">
+    <h1>Expert review</h1>
+    <span id="who" class="who"></span>
+    <a class="link" href="/">Assistant</a>
+</header>
+
+<main>
+    <p class="note">
+        Answers the assistant sent to a qualified reviewer. A stop stays a stop unless you write corrected guidance and
+        cite the manual. Every decision is recorded with your name in the audit trail.
+    </p>
+
+    <section id="login" class="panel">
+        <h2>Sign in</h2>
+        <label>Your name or id <input id="reviewer-id" autocomplete="username" maxlength="64"></label>
+        <label>Reviewer token <input id="reviewer-token" type="password" autocomplete="current-password"></label>
+        <button id="sign-in" type="button">Sign in</button>
+        <p id="login-error" class="error" role="alert"></p>
+    </section>
+
+    <section id="queue" class="panel" hidden>
+        <div class="row">
+            <h2>Cases</h2>
+            <label>Show
+                <select id="status-filter">
+                    <option value="pending">waiting</option>
+                    <option value="decided">decided</option>
+                    <option value="all">all</option>
+                </select>
+            </label>
+            <button id="refresh" type="button">Refresh</button>
+            <button id="sign-out" type="button" class="secondary">Sign out</button>
+        </div>
+        <p id="counts" class="muted"></p>
+        <p id="instance" class="muted"></p>
+        <table>
+            <thead>
+            <tr><th>Opened</th><th>Why</th><th>Equipment</th><th>Question</th><th>Status</th></tr>
+            </thead>
+            <tbody id="rows"></tbody>
+        </table>
+        <p id="empty" class="muted" hidden>Nothing here.</p>
+    </section>
+
+    <section id="detail" class="panel" hidden>
+        <h2>Case <span id="case-id" class="muted"></span></h2>
+        <dl id="facts"></dl>
+        <h3>Question (as the assistant saw it)</h3>
+        <pre id="question"></pre>
+        <h3>The assistant's answer</h3>
+        <pre id="answer"></pre>
+        <div id="lists"></div>
+        <h3>Manual passages it relied on</h3>
+        <ul id="citations"></ul>
+
+        <form id="decision-form" hidden>
+            <h3>Your decision</h3>
+            <label><input type="radio" name="decision" value="confirm"> <strong>Confirm</strong>: the assistant's decision was right</label>
+            <label><input type="radio" name="decision" value="correct"> <strong>Correct</strong>: I write the corrected guidance</label>
+            <label><input type="radio" name="decision" value="reject"> <strong>Reject</strong>: the answer is wrong and is withdrawn</label>
+            <label>Reason <small>(required to correct or reject)</small>
+                <textarea id="reason" rows="3" maxlength="1000"></textarea>
+            </label>
+            <div id="correction-fields" hidden>
+                <label>Corrected guidance <small>(shown to the engineer as your guidance)</small>
+                    <textarea id="corrected-text" rows="6" maxlength="4000"></textarea>
+                </label>
+                <label>Manual sources <small>(one per line: document, page or section)</small>
+                    <textarea id="evidence" rows="3"></textarea>
+                </label>
+            </div>
+            <button id="submit-decision" type="submit">Record decision</button>
+            <button id="close-detail" type="button" class="secondary">Close</button>
+            <ul id="decision-errors" class="error" role="alert"></ul>
+        </form>
+        <div id="decided" hidden></div>
+    </section>
+</main>
+<script src="{{ url_for('static', filename='js/review.js') }}"></script>
+</body>
+</html>
