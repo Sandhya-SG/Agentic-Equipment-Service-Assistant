@@ -8,9 +8,11 @@ from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.routes.health import router as health_router
+from app.routes.reviews import router as reviews_router
 from app.schemas.feedback import FeedbackRequest, FeedbackResponse
 from app.schemas.request import ChatRequest
 from app.schemas.response import ChatResponse
+from app.services import review_queue
 from app.services.chat_service import handle_chat
 from app.services.graph_runner import warm_up
 from asa.components import logging_sub
@@ -45,6 +47,7 @@ app.add_middleware(
 )
 
 app.include_router(health_router)
+app.include_router(reviews_router)
 
 
 @app.get("/")
@@ -95,4 +98,5 @@ def monitoring(
         "summary": summary,
         "alerts": logging_sub.check_alerts(summary),
         "audit_integrity": logging_sub.verify_audit_integrity() if verify else None,
+        "review": review_queue.summary(),
     }

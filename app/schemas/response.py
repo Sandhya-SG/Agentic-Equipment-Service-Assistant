@@ -42,6 +42,10 @@ class ChatResponse(BaseModel):
     explanation: dict[str, Any] | None = Field(
         default=None, description="From the Explainability layer when it exists: confidence, citations, reasons"
     )
+    review: dict[str, Any] | None = Field(
+        default=None,
+        description="Set when the answer was sent to a human reviewer: review_id, status and trigger",
+    )
     clarification_state: str | None = Field(
         default=None,
         description="Signed pending-clarification state; send it back with the next message (see clarification_token)",

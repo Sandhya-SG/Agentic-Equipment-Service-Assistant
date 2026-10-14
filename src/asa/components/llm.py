@@ -17,11 +17,14 @@ needed a key, and no call had a timeout, an output cap or a budget. This module 
 Settings (environment): OPENAI_TIMEOUT_S, OPENAI_CONNECT_TIMEOUT_S, OPENAI_MAX_RETRIES,
 OPENAI_MAX_OUTPUT_TOKENS, OPENAI_REQUEST_TOKEN_BUDGET (0 turns the budget off).
 
-A spend cap protects a small prepaid balance: with OPENAI_SPEND_CAP_USD set, the estimated cost of every call (its
+A spend cap helps protect a small prepaid balance. It is a best-effort control on an ESTIMATED cost, not a guaranteed
+financial limit (see below). With OPENAI_SPEND_CAP_USD set, the estimated cost of every call (its
 tokens times the model's price) is added to a ledger file (OPENAI_SPEND_LEDGER, default `.openai_spend.json` in the
 working directory), and once the ledger reaches the cap every further call raises `SpendCapReached` before anything is
 sent. The estimate covers only calls made through this client (the app and the evaluation scripts), not DeepEval or
-Promptfoo, which have their own clients; set the limit in the OpenAI console for those.
+Promptfoo, which have their own clients; set the limit in the OpenAI console for those. The estimate can be lower than
+the real bill (for example when a call times out on our side but completes on the provider's, or for cached-input
+discounts and price changes), so keep a margin and read the real balance from the OpenAI usage page.
 """
 
 from __future__ import annotations

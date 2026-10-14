@@ -17,6 +17,7 @@ import logging
 import time
 
 from app.schemas.response import ChatResponse, SafetyInfo, TraceStep
+from app.services import review_queue
 from app.services.clarification_store import (
     PendingClarification,
     clear_pending,
@@ -279,13 +280,53 @@ def _halt_defeat_request(
     logging_sub.end_run(run_id, audit)
     logging_sub.emit_metrics(run_id, audit, time.monotonic() - started)
     logger.warning("chat halted: request to defeat a safety control (%s) run_id=%s", control, run_id)
+    review = _open_review(
+        run_id=run_id,
+        status="halted",
+        escalate_only=False,
+        confidence=None,
+        question=safe_message,
+        answer=answer,
+        equipment_model=equipment_model,
+        specialist=None,
+        verdict="halt",
+        hazards=["safety_control_defeat"],
+        ppe_required=[],
+        sources=[],
+        explanation=None,
+        trace=[],
+    )
     return ChatResponse(
         response=answer,
         conversation_id=conversation_id,
         status="halted",
         safety=SafetyInfo(requires_human_review=True),
         run_id=run_id,
+        review=review,
     )
+
+
+def _review_trigger(status: str, escalate_only: bool, explanation: dict | None, confidence: float | None) -> str | None:
+    """Why an answer goes to a human reviewer, or None. A stop, an escalation, an escalate-only hazard, or an answer
+    that is not confident enough; otherwise a random sample when REVIEW_SAMPLE_RATE is set."""
+    if status == "halted":
+        return "halted"
+    if status == "escalated":
+        return "escalate_only" if escalate_only else "escalated"
+    if status == "ok":
+        if explanation is not None and confidence is not None and 0 < confidence < CONFIDENCE_FLOOR:
+            return "low_confidence"
+        if review_queue.should_sample():
+            return "sample"
+    return None
+
+
+def _open_review(*, status, escalate_only, confidence, **case) -> dict | None:
+    """Open a review for the answer when it needs one. Never raises: the engineer's answer does not wait for it."""
+    trigger = _review_trigger(status, escalate_only, case.get("explanation"), confidence)
+    if trigger is None:
+        return None
+    return review_queue.open_review(trigger=trigger, status=status, confidence=confidence, **case)
 
 
 def _pending_clarification(conversation_id: str, clarification_state: str | None):
@@ -507,6 +548,22 @@ def _handle_chat(
     if state.get("trace"):
         logging_sub.log_trace(run_id, state["trace"])
     logging_sub.end_run(run_id, audit)
+    review = _open_review(
+        run_id=run_id,
+        status=status,
+        escalate_only=bool(hazards and escalate_only),
+        confidence=confidence,
+        question=safe_message,
+        answer=answer,
+        equipment_model=equipment_model,
+        specialist=state.get("current_step"),
+        verdict=state.get("safety_verdict"),
+        hazards=safety.hazards,
+        ppe_required=safety.ppe_required,
+        sources=sources,
+        explanation=explanation,
+        trace=[step.agent for step in trace],
+    )
     logging_sub.emit_metrics(
         run_id,
         {
@@ -537,4 +594,5 @@ def _handle_chat(
         trace=trace,
         explanation=explanation,
         clarification_state=signed_state,
+        review=review,
     )
