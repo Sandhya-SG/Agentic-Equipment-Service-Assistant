@@ -586,7 +586,9 @@ entry for each claim:
         ]
 
     pairs = [(item, item_type) for item, _, item_type in jobs]
-    groups = [pairs[start : start + MAX_CLAIMS_PER_VALIDATION] for start in range(0, len(pairs), MAX_CLAIMS_PER_VALIDATION)]
+    groups = [
+        pairs[start : start + MAX_CLAIMS_PER_VALIDATION] for start in range(0, len(pairs), MAX_CLAIMS_PER_VALIDATION)
+    ]
 
     results = [
         ids
