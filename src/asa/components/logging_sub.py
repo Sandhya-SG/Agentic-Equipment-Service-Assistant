@@ -287,6 +287,49 @@ def end_run(run_id: str, final_state: dict) -> bool:
     return _append(AUDIT_LOG, record)
 
 
+def log_review_opened(run_id: str, review_id: str, trigger: str) -> bool:
+    """An answer was sent to a human reviewer (the case itself is in the review queue)."""
+    return _append(
+        AUDIT_LOG,
+        {
+            "type": "review_opened",
+            "run_id": run_id,
+            "review_id": review_id,
+            "timestamp": _now_iso(),
+            "trigger": trigger,
+        },
+    )
+
+
+def log_review_decision(
+    run_id: str | None,
+    review_id: str,
+    decision: str,
+    outcome: str,
+    reviewer: str,
+    reason: str | None = None,
+    corrected_text: str | None = None,
+) -> bool:
+    """A reviewer decided a case. The audit chain holds who, what and when, and only a hash and the length of any
+    free text (the text itself is in the review queue)."""
+    return _append(
+        AUDIT_LOG,
+        {
+            "type": "review_decision",
+            "run_id": run_id,
+            "review_id": review_id,
+            "timestamp": _now_iso(),
+            "decision": decision,
+            "outcome": outcome,
+            "reviewer": reviewer,
+            "reason_chars": len(reason or ""),
+            "reason_sha256": hashlib.sha256(reason.encode("utf-8")).hexdigest() if reason else None,
+            "correction_chars": len(corrected_text or ""),
+            "correction_sha256": hashlib.sha256(corrected_text.encode("utf-8")).hexdigest() if corrected_text else None,
+        },
+    )
+
+
 def log_feedback(run_id: str, helpful: bool, comment: str = "") -> bool:
     """Capture user feedback against a run (feeds the improvement loop)."""
     return _append(
