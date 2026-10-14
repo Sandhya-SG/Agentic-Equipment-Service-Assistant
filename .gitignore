@@ -37,3 +37,6 @@ mlruns/
 
 # Estimated OpenAI spend ledger (see OPENAI_SPEND_CAP_USD)
 .openai_spend.json
+
+# Generated evaluation reports (the real answers of a live run)
+eval/reports/
