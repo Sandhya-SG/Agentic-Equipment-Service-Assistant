@@ -251,13 +251,14 @@ def test_version_is_readable_in_kubernetes_with_the_token(monkeypatch):
     assert TestClient(app).get("/version", headers={"X-Version-Token": "s3cret"}).status_code == 200
 
 
-def test_the_kubernetes_backend_image_is_pinned_to_a_build_tag():
+def test_the_kubernetes_images_are_pinned_to_build_tags():
     """`kubectl apply -k k8s` must keep a specific build, not a moving tag like `:k8s`."""
     import yaml
 
     kustomization = yaml.safe_load((ROOT / "k8s" / "kustomization.yaml").read_text(encoding="utf-8"))
     pins = {entry["name"]: entry["newTag"] for entry in kustomization["images"]}
-    assert re.fullmatch(r"[0-9a-f]{7,40}", str(pins["aem-backend"])), "newTag must be a git commit"
+    for image in ("aem-backend", "aem-frontend"):
+        assert re.fullmatch(r"[0-9a-f]{7,40}", str(pins[image])), f"{image}: newTag must be a git commit"
 
 
 def test_the_kubernetes_backend_reads_the_token_as_an_optional_secret():

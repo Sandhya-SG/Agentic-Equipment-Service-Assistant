@@ -13,7 +13,9 @@ resources:
 # The backend image of this release. It is a per-build tag (the short git commit the image was built from, see
 # docs/deployment-verification.md), so applying this folder again keeps the same version and a rollback has an older
 # tag to go back to. Change newTag when you deploy a new build; `kubectl apply -k k8s` then rolls it out.
-# The frontend keeps its tag because its image does not carry the version information.
+# The frontend image is pinned the same way (the commit it was built from), so neither image uses a moving tag.
 images:
   - name: aem-backend
     newTag: 2f0cc72
+  - name: aem-frontend
+    newTag: 0c93a9b
