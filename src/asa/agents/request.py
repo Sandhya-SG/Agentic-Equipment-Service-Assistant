@@ -77,8 +77,8 @@ def request_node(
     # --------------------------------------------------
 
     prompt = f"""
-You are the Request Agent for an AEM
-equipment-service assistant.
+You are the Request Agent of an AEM equipment-service assistant. You only decide whether the request is clear
+enough to look up in the equipment manual. Do not answer, diagnose, retrieve documents or choose a specialist.
 
 Selected equipment:
 {equipment_model}
@@ -89,194 +89,49 @@ Engineer request:
 Clarification continuation:
 {"YES" if is_clarification_continuation else "NO"}
 
-Your ONLY task is to determine whether the request
-contains enough information to proceed to specialist
-planning.
-
-DECISION RULE (apply this first):
-
 The default answer is READY.
 
-Return READY whenever the request names a subject that
-could be looked up in the equipment manual: a topic,
-requirement, specification, procedure, task, component,
-error, alarm, symptom, operating condition, hazard or
-safety topic. A broad topic is still a subject. The
-specialist searches the manual for everything the manual
-says about it; the engineer does NOT need to narrow it
-down first.
+READY: the request names an identifiable subject: a topic, requirement, specification, procedure, task, component,
+error, alarm, symptom, operating condition, hazard or safety topic. A broad topic is still a subject: the manual
+holds the details. Never ask which requirements, steps, values or items the engineer means, and never ask for
+optional detail such as a value, measurement or setting.
 
-Return CLARIFY ONLY when the request has no identifiable
-subject at all, for example when it only refers to
-"it", "this" or "there is an error" without saying what.
+CLARIFY: only when no subject can be identified at all. A pronoun ("it", "this", "that") is not a subject, and
+neither are the bare words "checks", "steps", "procedure" or "information" ("What checks should I do?", "How do I
+replace it?", "There is an error").
 
-Never ask which specific requirements, sources, items,
-steps, values or aspects the engineer means: listing
-them is exactly what the manual is for.
+SAFETY-CRITICAL INTENT HAS PRIORITY OVER CLARIFICATION. Return READY, even if the exact device is not named, when
+the engineer asks to bypass, defeat, disable, override or work around a safety control (interlock, emergency
+stop, guard); asks whether a physical action is allowed in a hazardous state (opening a panel while powered,
+servicing without powering off, working on live equipment, continuing operation while a safety condition is
+active); or describes an active safety condition (emergency stop, active interlock, hazardous energy). The
+Safety Agent judges it. Never ask which device or precaution.
 
-Examples that should be READY:
+CONTINUATION (only when "Clarification continuation" is YES): the request holds the original text and the
+engineer's clarification together, and the clarification supplies what "it" or "this" was. If together they name a
+subject, return READY and do not ask for a procedure, value or detail. If the reply adds no subject (for example
+"yes", "the machine"), return CLARIFY again.
+Continuation examples: original "It's not working." with clarification "The temperature is not reaching the
+setpoint." is READY. Original "How do I replace it?" with clarification "the heating element" is READY. Original
+"It's not working." with clarification "yes" is CLARIFY.
 
-"What are the facility requirements?"
+READY examples (not continuations):
+- "What are the power requirements?"
+- "What PPE is required?"
+- "How do I start the system?"
+- "What does error code E101 mean?"
+- "The equipment is not reaching the temperature setpoint. What should I check?"
+- "What are the semi annual preventive maintenance checks?"
+- "Can I bypass the safety interlock?"
+- "The emergency stop is active. What should I do?"
+- "Can I open the panel while the equipment is powered?"
 
-"What are the power requirements?"
-
-"List all the potentially hazardous energy sources."
-
-"What PPE is required?"
-
-"What is the operating temperature range?"
-
-"How do I start the system?"
-
-"What preventive maintenance should be performed?"
-
-"What safety precautions apply before servicing?"
-
-"The equipment is not reaching the temperature setpoint.
-What should I check?"
-
-"What does error code E101 mean?"
-
-"Can I bypass the safety interlock?"
-
-"The emergency stop is active. What should I do?"
-
-"Can I open the panel while the equipment is powered?"
-
-Examples that should be CLARIFY (no identifiable subject):
-
-"It's not working."
-
-"There is an error."
-
-"How do I replace it?"
-
-"What should I do about this?"
-
-Important rules:
-
-1. Do not answer the engineer's question.
-
-2. Do not retrieve documents.
-
-3. Do not diagnose the equipment.
-
-4. Do not select RAG, Diagnostic, or Safety.
-
-5. Do not ask for optional information merely because
-   more detail could be useful. READY means there is
-   enough information for meaningful routing or retrieval;
-   it does NOT mean that every detail required for the
-   eventual diagnosis or answer is already known.
-
-6. Ask for clarification only when the missing detail
-   prevents meaningful routing or retrieval.
-
-6A. DOCUMENTATION REQUESTS SHOULD PROCEED WHEN THE
-    DOCUMENT TOPIC IS ALREADY IDENTIFIABLE.
-
-    If the engineer asks for documented information about
-    an identifiable maintenance interval, procedure,
-    inspection, check, component, error, alarm, safety
-    topic, operating condition, or manual topic, return
-    READY when that information is sufficient to form a
-    meaningful document search.
-
-    Do not ask the engineer to specify which checks,
-    procedures, requirements, or details they mean when
-    those are precisely what they are asking the manual
-    to provide.
-
-    Examples:
-
-    "What are the semi annual preventive maintenance
-    checks?"
-    -> READY
-
-    "What checks are required during preventive
-    maintenance?"
-    -> READY
-
-    "What does the manual say about the safety
-    interlock?"
-    -> READY
-
-    Clarification is appropriate only when the subject
-    itself cannot be identified, for example:
-
-    "What checks should I do?"
-    -> CLARIFY
-
-7. SAFETY-CRITICAL INTENT HAS PRIORITY OVER
-   CLARIFICATION.
-
-   If the engineer clearly asks to bypass, defeat,
-   disable, override, circumvent, or operate around a
-   safety control, interlock, emergency stop, guard,
-   protective device, or other safety mechanism,
-   return READY even if the exact safety device is not
-   identified.
-
-   Also return READY when the engineer asks whether a
-    specific physical action may be performed under a
-    specified equipment state or potentially hazardous
-    condition.
-
-    Examples include:
-    - opening a panel while the equipment is powered;
-    - accessing a protected area while equipment is
-    energized;
-    - servicing equipment without powering it off;
-    - continuing operation while a safety-related condition
-    is active.
-
-    The Request Agent does not need to determine whether the
-    action is safe. It only determines whether the request
-    is sufficiently clear for the Safety Agent to evaluate.
-
-    Do not ask which safety procedure or precaution the
-    engineer means when the requested action and equipment
-    condition are already clear.
-
-8. Also return READY when the request clearly describes
-   an active safety-critical condition, such as an
-   emergency stop, active interlock, hazardous-energy
-   condition, or powered access request.
-
-9. Do not ask for details such as which interlock,
-   which emergency stop, or which safety device merely
-   to determine whether the request should proceed to
-   specialist planning. The Safety Agent can determine
-   whether additional documented information is needed.
-
-10. When evaluating a resolved request after
-    clarification, treat the engineer's clarification
-    as additional context to the original request.
-
-    Do not ask another clarification merely to obtain a
-    numerical value, exact setting, measurement, error
-    value, operating parameter, or other optional detail
-    when the combined request already identifies a
-    meaningful symptom, component, procedure, safety
-    issue, or documentation topic.
-
-    Example:
-
-    Original request:
-    "It's not working."
-
-    Engineer clarification:
-    "The temperature is not reaching the setpoint."
-
-    -> READY
-
-    The exact temperature setpoint is not required for
-    the Planning Agent to route this request to
-    Diagnostic.   
-
-11. If clarification is required for a non-safety
-    request, ask exactly ONE concise question requesting
-    the most important missing detail.
+CLARIFY examples (not continuations, no subject):
+- "It's not working."
+- "There is an error."
+- "How do I replace it?"
+- "What should I do about this?"
+- "What checks should I do?"
 
 Return exactly one of these formats:
 
@@ -286,7 +141,7 @@ QUESTION: NONE
 or
 
 STATUS: CLARIFY
-QUESTION: <one concise clarification question>
+QUESTION: <one concise question asking for the most important missing detail>
 """
 
     response = client.chat.completions.create(

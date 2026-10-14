@@ -214,6 +214,25 @@ def test_prompt_keeps_the_safety_priority_and_the_default_to_ready_rules(model):
     assert "Can I bypass the safety interlock?" in prompt
 
 
+def test_prompt_keeps_the_rules_that_decide_vague_requests_and_follow_ups(model):
+    """The rules the clarification evaluation depends on: pronouns are not subjects, and a follow-up that names the
+    subject completes the request while one that does not is asked about again."""
+    run()
+    prompt = model["calls"][0]["messages"][1]["content"]
+    assert 'A pronoun ("it", "this", "that") is not a subject' in prompt
+    assert 'Original "How do I replace it?" with clarification "the heating element" is READY' in prompt
+    assert 'with clarification "yes" is CLARIFY' in prompt
+    assert "Return exactly one of these formats" in prompt
+
+
+def test_the_prompt_stays_short(model):
+    """The Request Agent runs on every question, so its fixed instructions are a token cost on all of them. The
+    measured reduction was from about 6,000 to about 3,300 characters; do not let it grow back unnoticed."""
+    run()
+    prompt = model["calls"][0]["messages"][1]["content"]
+    assert len(prompt) < 4000, f"the Request Agent prompt grew to {len(prompt)} characters"
+
+
 def test_a_plain_request_is_not_marked_as_a_clarification_continuation(model):
     """The continuation flag is NO unless a resolved query exists."""
     run()

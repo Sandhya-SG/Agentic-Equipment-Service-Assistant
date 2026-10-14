@@ -114,8 +114,7 @@ _MARKUP = [
 # tests/unit/test_schema_guard.py checks that every phrase is still present in the agent source, so this list cannot
 # silently go stale when a prompt is reworded.
 PROMPT_SIGNATURES = (
-    "your only task is to determine whether the request",
-    "decision rule (apply this first)",
+    "you are the request agent of an aem",
     "choose exactly one specialist agent",
     "routing priority:",
     "you are the safety agent for an aem",
