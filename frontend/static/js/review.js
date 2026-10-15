@@ -49,6 +49,32 @@ function whyText(item) {
 
 function when(iso) { return iso ? iso.replace("T", " ").slice(0, 16) : ""; }
 
+// What each hazard identifier means, for the reviewer (shown beside the hazards of a case and in the help panel).
+// Kept in step with the safety rules by a test: every category the rules can find must be listed here.
+const HAZARDS = {
+    safety_control_defeat: "A request to bypass, defeat or disable a safety control such as an interlock. Always stopped by a rule, before the manual is searched.",
+    high_voltage: "High voltage or live electrical work. Escalate-only: a question that names it gets no procedure, only a referral.",
+    stored_energy: "Energy that can release unexpectedly (capacitors, discharge, pressurised parts). Escalate-only, like high voltage.",
+    lockout_tagout: "Lock-out / tag-out: isolating and locking energy sources before work. Adds warnings, PPE and a review flag.",
+    thermal: "Hot surfaces, heater elements or high temperatures (burn risk). Adds warnings, PPE and a review flag.",
+    chemical: "Glycol, isopropyl alcohol, solvents or other hazardous substances. Adds warnings, PPE and a review flag.",
+    pressure: "Pneumatic, hydraulic or pressurised lines and supplies. Adds warnings, PPE and a review flag.",
+    mechanical: "Moving parts, pinch points or crushing risk. Adds warnings, PPE and a review flag.",
+    cryogenic: "Cryogenic or very cold materials. Adds warnings, PPE and a review flag.",
+    esd: "Electrostatic discharge when handling static-sensitive parts. Adds warnings, PPE and a review flag."
+};
+
+function hazardLine(id) { return HAZARDS[id] ? id + ": " + HAZARDS[id] : id; }
+
+function buildHazardGlossary() {
+    const list = $("hazard-glossary");
+    list.textContent = "";
+    for (const id of Object.keys(HAZARDS)) {
+        list.appendChild(el("dt", "", id));
+        list.appendChild(el("dd", "", HAZARDS[id]));
+    }
+}
+
 function signedIn() {
     show("login", false);
     show("queue", true);
@@ -139,7 +165,7 @@ async function openCase(id) {
     $("answer").textContent = item.answer || "";
     const lists = $("lists");
     lists.textContent = "";
-    bullets(lists, "Hazards", item.hazards);
+    bullets(lists, "Hazards", (item.hazards || []).map(hazardLine));
     bullets(lists, "Protective equipment", item.ppe_required);
     bullets(lists, "Sources", item.sources);
     const citations = $("citations");
@@ -150,7 +176,10 @@ async function openCase(id) {
         li.appendChild(el("div", "muted", c.quote || ""));
         citations.appendChild(li);
     }
-    if (!(item.citations || []).length) { citations.appendChild(el("li", "muted", "None recorded.")); }
+    if (!(item.citations || []).length) {
+        citations.appendChild(el("li", "muted", "None recorded. A safety rule can stop a request before the manual is searched, "
+            + "so there may be no passage to show; the rule that applied is the hazard listed above."));
+    }
     renderDecision(item);
     show("detail", true);
     $("detail").scrollIntoView({ behavior: "smooth" });
@@ -234,6 +263,13 @@ document.addEventListener("DOMContentLoaded", () => {
     $("refresh").addEventListener("click", loadList);
     $("status-filter").addEventListener("change", loadList);
     $("close-detail").addEventListener("click", () => show("detail", false));
+    buildHazardGlossary();
+    $("help-toggle").addEventListener("click", () => {
+        const open = $("help").hidden;
+        show("help", open);
+        $("help-toggle").setAttribute("aria-expanded", String(open));
+        $("help-toggle").textContent = open ? "Hide help" : "Reviewer help";
+    });
     $("decision-form").addEventListener("submit", submitDecision);
     for (const radio of document.querySelectorAll("input[name=decision]")) {
         radio.addEventListener("change", () => show("correction-fields", radio.value === "correct" && radio.checked));

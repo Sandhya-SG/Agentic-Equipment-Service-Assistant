@@ -34,3 +34,12 @@ dd { margin: 0; }
 .badge.corrected, .badge.rejected { color: var(--bad); }
 .decided-box { border: 1px solid var(--line); border-radius: 6px; padding: 10px; margin-top: 12px; }
 @media (max-width: 640px) { th:nth-child(3), td:nth-child(3) { display: none; } dl { grid-template-columns: 1fr; } }
+.help ul { margin: 4px 0 8px; padding-left: 20px; }
+.help li { margin: 2px 0; }
+.help dl { margin: 8px 0; }
+.help dt { font-family: ui-monospace, monospace; font-size: 13px; }
+.help .checklist { list-style: none; padding-left: 0; }
+.help .checklist label { display: flex; gap: 8px; align-items: baseline; margin: 2px 0; }
+.help .checklist input { width: auto; }
+.bar button { white-space: nowrap; }
+@media (max-width: 640px) { .bar { flex-wrap: wrap; } }
