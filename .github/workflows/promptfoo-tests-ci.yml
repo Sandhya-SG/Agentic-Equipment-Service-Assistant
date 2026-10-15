@@ -48,7 +48,7 @@ jobs:
         # Not requirements-backend.txt: that pulls the ML stack (torch, sentence-transformers, chromadb), which this
         # suite never uses and which is gigabytes on a runner. Without the agents' packages the app still starts, its
         # warm-up fails gracefully ("agents not ready") and /health stays up, which is exactly the free-tier case.
-        # Checked in a clean virtual environment: all 86 tests pass with just these packages.
+        # Checked in a clean virtual environment: the whole free suite passes with just these packages.
         run: |
           python -m pip install --upgrade pip
           pip install "fastapi>=0.110.0" "uvicorn>=0.29.0" "pydantic>=2.6.0" "python-dotenv>=1.0.0" "openai>=1.40.0"

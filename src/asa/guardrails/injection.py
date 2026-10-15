@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import codecs
 import re
 import unicodedata
 from dataclasses import dataclass, field, replace
@@ -58,6 +59,8 @@ _INJECTION_PATTERNS: dict[str, list[str]] = {
         r"ignorier(?:e|en)?\s+(?:alle\s+)?(?:vorherigen|bisherigen|fr[üu]heren)\s+(?:anweisungen|regeln|instruktionen)",
         r"(?:忽略|无视|忽視|無視)(?:之前|以上|上述|先前|所有|以前)的?(?:所有)?的?(?:指令|指示|规则|規則|说明|說明|提示)",
         r"abaikan\s+(?:semua\s+)?(?:arahan|peraturan|instruksi)\s+(?:sebelum(?:nya)?|terdahulu|di\s+atas)",
+        # Tamil: "ignore all the previous instructions" (previous, optional "all", an instruction word, then ignore/forget).
+        r"முந்தைய\s+(?:அனைத்து\s+)?(?:வழிமுறை|அறிவுறுத்தல்|கட்டளை|விதி)\S*\s+(?:புறக்கணி|மறந்து|கைவிடு)",
     ],
     "role_hijack": [
         # "you are now allowed to start the cycle" is ordinary; a role word has to follow.
@@ -121,8 +124,9 @@ _NEUTRALIZED_TOKEN = "[removed: possible injected instruction]"
 # The patterns above see the text as typed. Attackers hide the same request behind look-alike letters,
 # digits for letters, spaced-out letters, zero-width characters or base64. Each of these is undone here and
 # the patterns are run over every variant. The original text is never replaced: normalisation is only for
-# detection, so a manual passage keeps its exact wording. What cannot be undone this way (ROT13, reversed
-# text, other languages and scripts without a pattern, typos, hex) stays a documented known miss.
+# detection, so a manual passage keeps its exact wording. scan_text() also tries ROT13, reversed text, hex, typos
+# and words split mid-word (see "More ways to hide the same request" below). What still cannot be undone
+# (other encodings and ciphers, other languages and scripts without a pattern) stays a documented known miss.
 
 _ZERO_WIDTH = dict.fromkeys(map(ord, "​‌‍⁠﻿­"), None)
 
@@ -247,6 +251,116 @@ def text_variants(text: str) -> list[str]:
 
 
 # --------------------------------------------------------------------------- #
+# More ways to hide the same request (used by scan_text only)                 #
+# --------------------------------------------------------------------------- #
+# ROT13, reversed text, hex, typos and words split mid-word. They are kept out of text_variants() on purpose: the
+# safety rules share that function and should not start matching on reversed or ciphered text. Each one only produces
+# another copy to run the same patterns over; a copy that matches nothing changes nothing, so ordinary text is safe.
+
+_HEX_RUN = re.compile(r"(?:0x)?(?:[0-9a-fA-F]{2}[\s:,-]?){10,}")
+_MAX_HEX_TOKENS = 10
+
+# Words the attacks are built from (six letters or more: shorter ones cannot be matched by "one slip" safely).
+_ATTACK_WORDS = (
+    "ignore",
+    "previous",
+    "instructions",
+    "disregard",
+    "forget",
+    "override",
+    "bypass",
+    "safety",
+    "system",
+    "prompt",
+    "reveal",
+    "password",
+    "credentials",
+    "guardrails",
+    "restrictions",
+    "guidelines",
+    "disable",
+)
+_WORD = re.compile(r"[A-Za-z]{6,}")
+_MIN_TYPO_CORRECTIONS = 2  # one near-miss is ordinary ("I forgot all ..."); two or more in a request is not
+
+
+def _one_slip_apart(a: str, b: str) -> bool:
+    """True when the words differ by exactly one substitution, insertion, deletion or swap of two neighbours."""
+    if a == b or abs(len(a) - len(b)) > 1:
+        return False
+    if a.startswith(b) or b.startswith(a):
+        return False  # a plain ending ("ignored", "systems") is a real word, not a typo
+    if len(a) == len(b):
+        diffs = [i for i in range(len(a)) if a[i] != b[i]]
+        if len(diffs) == 1:
+            return True
+        return (
+            len(diffs) == 2 and diffs[1] == diffs[0] + 1 and a[diffs[0]] == b[diffs[1]] and a[diffs[1]] == b[diffs[0]]
+        )
+    short, long_ = sorted((a, b), key=len)
+    return any(long_[:i] + long_[i + 1 :] == short for i in range(len(long_)))
+
+
+def _typos_fixed(text: str) -> str | None:
+    """The text with misspelt attack words corrected, when at least two were; otherwise None."""
+    fixed = 0
+
+    def fix(match: re.Match) -> str:
+        nonlocal fixed
+        word = match.group(0).lower()
+        if word in _ATTACK_WORDS:
+            return match.group(0)
+        for known in _ATTACK_WORDS:
+            if _one_slip_apart(word, known):
+                fixed += 1
+                return known
+        return match.group(0)
+
+    corrected = _WORD.sub(fix, text)
+    return corrected if fixed >= _MIN_TYPO_CORRECTIONS else None
+
+
+def _decoded_hex(text: str) -> list[str]:
+    """Readable text hidden as hexadecimal bytes ("69676e6f..." or "69 67 6e ..."). Binary decodes are ignored."""
+    decoded: list[str] = []
+    for token in _HEX_RUN.findall(text)[:_MAX_HEX_TOKENS]:
+        digits = re.sub(r"[^0-9a-fA-F]", "", token[2:] if token.lower().startswith("0x") else token)
+        if len(digits) % 2:
+            digits = digits[:-1]
+        try:
+            candidate = bytes.fromhex(digits[: _MAX_BASE64_CHARS * 2]).decode("utf-8")
+        except (ValueError, UnicodeDecodeError):
+            continue
+        if candidate and sum(ch.isprintable() or ch.isspace() for ch in candidate) / len(candidate) >= 0.95:
+            decoded.append(candidate)
+    return decoded
+
+
+def _extra_variants(text: str) -> list[tuple[str, str]]:
+    """The copies of the text for the extra tricks, each with the name of the trick."""
+    extra: list[tuple[str, str]] = [
+        (codecs.encode(text, "rot_13"), "ROT13"),
+        (text[::-1], "reversed text"),
+    ]
+    extra.extend((decoded, "hex") for decoded in _decoded_hex(text))
+    fixed = _typos_fixed(_normalize(text))
+    if fixed:
+        extra.append((fixed, "misspelt words"))
+    return extra
+
+
+# The same patterns with the spaces removed, to see words split mid-word ("ig nore all previ ous instruc tions").
+# Only the multi-word attack phrases in plain letters: the line-based role labels and the loose exfiltration
+# patterns would match too much once every space is gone.
+_SQUASHED: dict[str, list[re.Pattern]] = {
+    category: [re.compile(pattern.replace(r"\s+", r"\s*"), re.IGNORECASE) for pattern in patterns if pattern.isascii()]
+    for category, patterns in _INJECTION_PATTERNS.items()
+    if category in ("instruction_override", "role_hijack", "prompt_leak", "safety_bypass")
+}
+_MAX_SQUASH_CHARS = 2000
+
+
+# --------------------------------------------------------------------------- #
 # Results                                                                     #
 # --------------------------------------------------------------------------- #
 
@@ -276,7 +390,7 @@ def scan_text(text: str) -> InjectionScan:
     categories: list[str] = []
     matches: list[str] = []
     obfuscation: list[str] = []
-    for variant, trick in _variants(text):
+    for variant, trick in [*_variants(text), *_extra_variants(text)]:
         for category, patterns in _COMPILED.items():
             if category in categories:
                 continue  # already found as typed or in an earlier form: the trick did not hide it
@@ -288,6 +402,18 @@ def scan_text(text: str) -> InjectionScan:
                     if trick and trick not in obfuscation:
                         obfuscation.append(trick)
                     break
+    squashed = re.sub(r"\s+", "", text)[:_MAX_SQUASH_CHARS]
+    for category, patterns in _SQUASHED.items():
+        if category in categories:
+            continue
+        for pat in patterns:
+            m = pat.search(squashed)
+            if m:
+                categories.append(category)
+                matches.append(m.group(0).strip())
+                if "words split mid-word" not in obfuscation:
+                    obfuscation.append("words split mid-word")
+                break
     return InjectionScan(flagged=bool(categories), categories=categories, matches=matches, obfuscation=obfuscation)
 
 

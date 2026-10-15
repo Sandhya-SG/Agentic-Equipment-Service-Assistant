@@ -4,7 +4,7 @@
     "block_rate_catalogued": {"min": 0.9},
     "category_accuracy": {"min": 0.9},
     "false_positive_rate": {"max": 0.05},
-    "block_rate_all": {"min": 0.8}
+    "block_rate_all": {"min": 0.9}
   },
   "explanation": {
     "quote_exactness": {"min": 1.0},
