@@ -241,3 +241,40 @@ def test_the_case_view_explains_an_empty_citation_list_without_markup():
     script = (JS / "review.js").read_text(encoding="utf-8")
     assert "A safety rule can stop a request before the manual is searched" in script
     assert "innerHTML" not in script  # the explanations are plain text too
+
+
+def test_times_are_labelled_utc_and_the_main_fields_have_a_hint():
+    script = (JS / "review.js").read_text(encoding="utf-8")
+    assert '+ " UTC"' in script  # the list and the case both go through the same function
+    assert "CONFIDENCE_HINT" in script and "WHY_HINTS" in script
+    assert "innerHTML" not in script
+
+
+def test_every_reason_a_case_can_be_opened_has_a_hint_that_matches_the_backend():
+    """The triggers the backend can set must each have a hint in the page (a new trigger needs one)."""
+    import re
+
+    from app.services import chat_service
+
+    script = (JS / "review.js").read_text(encoding="utf-8")
+    hints = set(re.findall(r"^\s+(\w+):", script.split("const WHY_HINTS = {")[1].split("};")[0], flags=re.MULTILINE))
+    labels = set(
+        re.findall(r"^\s+(\w+):", script.split("function whyText")[1].split("}[item.trigger]")[0], flags=re.MULTILINE)
+    ) | {
+        "halted",
+        "escalated",
+        "escalate_only",
+        "low_confidence",
+        "sample",
+    }
+    triggers = set()
+    for status, escalate_only, confidence, sampled in (
+        ("halted", False, None, False),
+        ("escalated", False, None, False),
+        ("escalated", True, None, False),
+        ("ok", False, 0.01, False),
+    ):
+        explanation = {} if confidence is not None else None
+        triggers.add(chat_service._review_trigger(status, escalate_only, explanation, confidence))
+    triggers.add("sample")  # set by chance when REVIEW_SAMPLE_RATE is on
+    assert triggers <= hints and triggers <= labels, triggers - hints

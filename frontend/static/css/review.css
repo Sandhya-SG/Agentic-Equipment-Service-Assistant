@@ -43,3 +43,4 @@ dd { margin: 0; }
 .help .checklist input { width: auto; }
 .bar button { white-space: nowrap; }
 @media (max-width: 640px) { .bar { flex-wrap: wrap; } }
+.hint { display: block; font-size: 12px; }

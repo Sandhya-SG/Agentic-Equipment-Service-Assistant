@@ -47,7 +47,7 @@ function whyText(item) {
     }[item.trigger] || item.trigger || "";
 }
 
-function when(iso) { return iso ? iso.replace("T", " ").slice(0, 16) : ""; }
+function when(iso) { return iso ? iso.replace("T", " ").slice(0, 16) + " UTC" : ""; }
 
 // What each hazard identifier means, for the reviewer (shown beside the hazards of a case and in the help panel).
 // Kept in step with the safety rules by a test: every category the rules can find must be listed here.
@@ -63,6 +63,16 @@ const HAZARDS = {
     cryogenic: "Cryogenic or very cold materials. Adds warnings, PPE and a review flag.",
     esd: "Electrostatic discharge when handling static-sensitive parts. Adds warnings, PPE and a review flag."
 };
+
+// One line under the fields a reviewer is most likely to ask about; the full text is in the help panel.
+const WHY_HINTS = {
+    halted: "The assistant refused the request: a rule or the Safety Agent decided it must not proceed.",
+    escalated: "The evidence was not enough, or the task is hazardous, so a person must take over.",
+    escalate_only: "The question names high voltage or stored energy: no procedure was given, only a referral.",
+    low_confidence: "The assistant answered but was not confident enough in the answer.",
+    sample: "An ordinary answer picked at random for a quality check."
+};
+const CONFIDENCE_HINT = "How well the answer is supported by the manual passages. A stop made by a rule has none.";
 
 function hazardLine(id) { return HAZARDS[id] ? id + ": " + HAZARDS[id] : id; }
 
@@ -131,10 +141,12 @@ async function loadList() {
     show("empty", body.items.length === 0);
 }
 
-function fact(list, name, value) {
+function fact(list, name, value, hint) {
     if (value === undefined || value === null || value === "") { return; }
     list.appendChild(el("dt", "", name));
-    list.appendChild(el("dd", "", String(value)));
+    const dd = el("dd", "", String(value));
+    if (hint) { dd.appendChild(el("small", "hint", hint)); }
+    list.appendChild(dd);
 }
 
 function bullets(parent, title, values) {
@@ -154,12 +166,13 @@ async function openCase(id) {
     $("case-id").textContent = id.slice(0, 8);
     const facts = $("facts");
     facts.textContent = "";
-    fact(facts, "Why it is here", whyText(item));
+    fact(facts, "Why it is here", whyText(item), WHY_HINTS[item.trigger]);
     fact(facts, "Equipment", item.equipment_model);
     fact(facts, "Handled by", item.specialist);
     fact(facts, "Assistant's decision", item.verdict);
     fact(facts, "Confidence", item.confidence_level
-        ? item.confidence_level + (item.confidence !== null && item.confidence !== undefined ? " (" + item.confidence + ")" : "") : "");
+        ? item.confidence_level + (item.confidence !== null && item.confidence !== undefined ? " (" + item.confidence + ")" : "") : "",
+        CONFIDENCE_HINT);
     fact(facts, "Opened", when(item.created_at));
     $("question").textContent = item.question || "";
     $("answer").textContent = item.answer || "";
