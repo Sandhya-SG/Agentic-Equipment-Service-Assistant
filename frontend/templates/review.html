@@ -5,13 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Expert review - Equipment Service Assistant</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/review.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/nav.css') }}">
 </head>
 <body>
 <header class="bar">
     <h1>Expert review</h1>
     <span id="who" class="who"></span>
     <button id="help-toggle" type="button" class="secondary" aria-controls="help" aria-expanded="false">Reviewer help</button>
-    <a class="link" href="/">Assistant</a>
+    {% set active = 'review' %}{% include '_nav.html' %}
 </header>
 
 <main>

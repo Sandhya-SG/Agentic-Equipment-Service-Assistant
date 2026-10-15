@@ -1,12 +1,16 @@
+import hmac
 import logging
+import os
+import socket
 import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.config import settings
+from app.routes.health import OPEN_ENVIRONMENTS
 from app.routes.health import router as health_router
 from app.routes.reviews import router as reviews_router
 from app.schemas.feedback import FeedbackRequest, FeedbackResponse
@@ -103,14 +107,34 @@ def feedback(request: FeedbackRequest):
     return FeedbackResponse(recorded=logging_sub.log_feedback(request.run_id, request.helpful, request.comment or ""))
 
 
+def monitor_access(x_monitor_token: str | None = Header(default=None)) -> None:
+    """Operational numbers are for operators, not for every engineer.
+
+    With `MONITOR_TOKEN` set the caller must send it in `X-Monitor-Token` (401 otherwise). With no token the endpoint is
+    open only in development (`ENVIRONMENT` development, dev, local or test, and the default when unset); in any deployed
+    environment it answers 503: there is no open mode, as with the review API.
+    """
+    token = os.getenv("MONITOR_TOKEN", "")
+    if token:
+        if not x_monitor_token or not hmac.compare_digest(x_monitor_token.encode("utf-8"), token.encode("utf-8")):
+            raise HTTPException(status_code=401, detail="a valid X-Monitor-Token is required")
+    elif os.getenv("ENVIRONMENT", "development").lower() not in OPEN_ENVIRONMENTS:
+        raise HTTPException(status_code=503, detail="monitoring is not configured on this server")
+
+
 @app.get("/api/monitoring")
 def monitoring(
+    _: None = Depends(monitor_access),
     limit: int = Query(200, ge=1, le=5000, description="Only the most recent runs"),
     verify: bool = Query(True, description="Also re-walk the audit trail and check its hash chain"),
 ):
-    """Operational numbers, alerts and the audit-trail integrity check. Aggregates only, no text."""
+    """Operational numbers, alerts and the audit-trail integrity check. Aggregates only, no text.
+
+    `instance` is the backend pod these numbers come from: each pod keeps its own logs and ledger.
+    """
     summary = logging_sub.monitoring_summary(limit)
     return {
+        "instance": os.getenv("HOSTNAME") or socket.gethostname(),
         "summary": summary,
         "alerts": logging_sub.check_alerts(summary),
         "audit_integrity": logging_sub.verify_audit_integrity() if verify else None,

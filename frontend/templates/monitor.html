@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Monitoring - Equipment Service Assistant</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/review.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/nav.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/monitor.css') }}">
+</head>
+<body>
+<header class="bar">
+    <h1>Monitoring</h1>
+    <span id="health" class="badge" hidden></span>
+    {% set active = 'monitor' %}{% include '_nav.html' %}
+</header>
+
+<main>
+    <p class="note">
+        How the assistant is running: requests, safety blocks, cost, human review and the audit trail. These are totals
+        and rates only; no question or answer is shown here. For operators: the backend checks the monitoring token.
+    </p>
+
+    <section id="login" class="panel">
+        <h2>Sign in</h2>
+        <label>Monitoring token <input id="monitor-token" type="password" autocomplete="current-password"></label>
+        <button id="sign-in" type="button">Sign in</button>
+        <p id="login-error" class="error" role="alert"></p>
+    </section>
+
+    <div id="board" hidden>
+        <section class="panel">
+            <div class="row">
+                <h2>Overview</h2>
+                <label>Runs
+                    <select id="limit">
+                        <option value="50">last 50</option>
+                        <option value="200" selected>last 200</option>
+                        <option value="1000">last 1000</option>
+                    </select>
+                </label>
+                <label class="inline"><input id="auto" type="checkbox" checked> Refresh every 30 s</label>
+                <button id="refresh" type="button">Refresh</button>
+                <button id="sign-out" type="button" class="secondary">Sign out</button>
+            </div>
+            <p id="meta" class="muted"></p>
+            <p id="problem" class="error" role="alert" hidden></p>
+            <div id="cards" class="cards"></div>
+        </section>
+
+        <section class="panel">
+            <h2>Alerts</h2>
+            <ul id="alerts" class="plain"></ul>
+        </section>
+
+        <section class="panel">
+            <h2>Cost</h2>
+            <div id="spend-meter" class="meter" role="img" aria-label="Estimated spend against the cap"><div id="spend-fill" class="fill"></div></div>
+            <p id="spend-text"></p>
+            <p class="muted">An estimate kept by this backend pod, not your bill. The provider's usage page is the authoritative figure.</p>
+        </section>
+
+        <section class="panel">
+            <h2>Human review</h2>
+            <dl id="review"></dl>
+        </section>
+
+        <section class="panel">
+            <h2>Audit trail</h2>
+            <p id="audit"></p>
+        </section>
+
+        <section class="panel">
+            <h2>Breakdown</h2>
+            <div class="two">
+                <div><h3>Outcome of requests</h3><table><tbody id="statuses"></tbody></table></div>
+                <div><h3>By equipment</h3><table><tbody id="equipment"></tbody></table></div>
+            </div>
+        </section>
+
+        {% if langfuse_url %}
+        <p class="note">Detailed traces of each model call: <a class="link" href="{{ langfuse_url }}" target="_blank" rel="noopener noreferrer">Langfuse</a>.</p>
+        {% endif %}
+    </div>
+</main>
+<script src="{{ url_for('static', filename='js/monitor.js') }}"></script>
+</body>
+</html>

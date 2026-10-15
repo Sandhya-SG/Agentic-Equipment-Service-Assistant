@@ -14,6 +14,11 @@
         rel="stylesheet"
         href="{{ url_for('static', filename='css/app.css') }}"
     >
+
+    <link
+        rel="stylesheet"
+        href="{{ url_for('static', filename='css/nav.css') }}"
+    >
 </head>
 
 <body>
@@ -99,6 +104,8 @@
                     Agentic RAG · Diagnostic · Safety
                 </div>
             </div>
+
+            {% set active = 'assistant' %}{% include '_nav.html' %}
 
             <div class="equipment-control">
 

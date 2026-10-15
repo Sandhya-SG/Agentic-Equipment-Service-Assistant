@@ -1,0 +1,20 @@
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; margin-top: 8px; }
+.card { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: var(--bg); }
+.card .label { color: var(--muted); font-size: 13px; }
+.card .value { font-size: 24px; font-weight: 650; line-height: 1.3; }
+.card .hint { color: var(--muted); font-size: 12px; }
+label.inline { display: flex; align-items: center; gap: 6px; margin: 0; }
+label.inline input { width: auto; }
+.badge.ok { color: var(--ok); }
+.badge.warning { color: var(--warn); }
+.badge.critical { color: var(--bad); }
+ul.plain { list-style: none; padding: 0; margin: 0; }
+.alert { padding: 6px 10px; margin: 4px 0; border-left: 4px solid var(--warn); background: var(--bg); }
+.alert.critical { border-left-color: var(--bad); }
+.meter { height: 12px; border-radius: 6px; background: var(--bg); border: 1px solid var(--line); overflow: hidden; }
+.meter .fill { height: 100%; width: 0; background: var(--ok); }
+.meter .fill.warn { background: var(--warn); }
+.meter .fill.bad { background: var(--bad); }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+td.right { text-align: right; }
+@media (max-width: 640px) { .two { grid-template-columns: 1fr; } .cards { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); } }

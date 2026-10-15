@@ -24,6 +24,7 @@ OPTIONAL_KEYS = (
     "VERSION_TOKEN",
     "CLARIFICATION_SECRET",
     "REVIEWER_TOKEN",
+    "MONITOR_TOKEN",
 )  # stored when set in .env or the environment
 
 
