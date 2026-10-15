@@ -109,7 +109,8 @@ def serve(monkeypatch):
         servers.append(fake)
         monkeypatch.setenv("OPENAI_BASE_URL", fake.url)
         monkeypatch.setenv("OPENAI_API_KEY", "sk-test-key")
-        for name in ("OPENAI_SPEND_CAP_USD", "OPENAI_REQUEST_TOKEN_BUDGET", "OPENAI_MAX_OUTPUT_TOKENS"):
+        monkeypatch.setenv("OPENAI_SPEND_CAP_USD", "")  # empty, so load_dotenv() cannot bring back a cap from .env
+        for name in ("OPENAI_REQUEST_TOKEN_BUDGET", "OPENAI_MAX_OUTPUT_TOKENS"):
             monkeypatch.delenv(name, raising=False)
         if max_retries is None:
             monkeypatch.delenv("OPENAI_MAX_RETRIES", raising=False)
@@ -216,7 +217,7 @@ def test_a_refused_connection_is_retried_then_reported(monkeypatch):
     monkeypatch.setenv("OPENAI_BASE_URL", f"http://127.0.0.1:{port}/v1")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test-key")
     monkeypatch.setenv("OPENAI_MAX_RETRIES", "1")
-    monkeypatch.delenv("OPENAI_SPEND_CAP_USD", raising=False)
+    monkeypatch.setenv("OPENAI_SPEND_CAP_USD", "")  # empty, so load_dotenv() cannot bring back a cap from .env
     llm.reset_client()
     try:
         with pytest.raises(openai.APIConnectionError):

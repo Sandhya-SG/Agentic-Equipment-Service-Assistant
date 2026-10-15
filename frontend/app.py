@@ -107,7 +107,8 @@ def ask_backend():
     req = urllib_request.Request(
         f"{BACKEND_URL}/api/chat",
         data=json.dumps(body).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        # The browser's address, so the backend can limit each client rather than the frontend as a whole.
+        headers={"Content-Type": "application/json", "X-Forwarded-For": request.remote_addr or ""},
         method="POST",
     )
 
@@ -115,7 +116,7 @@ def ask_backend():
         with urllib_request.urlopen(req, timeout=BACKEND_TIMEOUT) as response:
             return jsonify(json.loads(response.read().decode("utf-8"))), response.status
     except urllib_error.HTTPError as exc:
-        # 400 (blocked), 422 (invalid input) and 503 (unavailable) carry a useful JSON body.
+        # 400 (blocked), 422 (invalid input), 429 (too many requests) and 503 (unavailable) carry a useful JSON body.
         try:
             return jsonify(json.loads(exc.read().decode("utf-8"))), exc.code
         except ValueError:

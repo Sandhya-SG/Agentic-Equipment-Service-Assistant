@@ -84,6 +84,17 @@ def test_the_review_token_is_never_in_a_manifest_or_the_compose_file_as_a_value(
     assert 'REVIEWER_TOKEN: "replace-me"' in example
 
 
+def test_the_cluster_has_the_cost_controls_and_the_ledger_is_on_the_writable_log_volume():
+    config = load("configmap.yaml")[0]["data"]
+    assert float(config["OPENAI_SPEND_CAP_USD"]) > 0  # an estimated-spend cap is on by default
+    assert config["OPENAI_SPEND_LEDGER"].startswith("/app/logs/")  # the root filesystem is read-only
+    assert int(config["RATE_LIMIT_PER_MINUTE"]) > 0
+    assert config["TRUST_FORWARDED_FOR"] == "true"  # safe only because the network policy admits just the frontend
+    ingress = [rule for doc in load("networkpolicy.yaml") for rule in doc.get("spec", {}).get("ingress", [])]
+    from_frontend = {"podSelector": {"matchLabels": {"app": "frontend"}}}
+    assert any(from_frontend in rule.get("from", []) for rule in ingress)
+
+
 def test_the_secret_script_can_store_the_review_token():
     script = (K8S.parent / "scripts" / "k8s_secret.py").read_text(encoding="utf-8")
     assert "REVIEWER_TOKEN" in script

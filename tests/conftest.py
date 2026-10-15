@@ -53,3 +53,15 @@ def isolated_logs(tmp_path, monkeypatch):
     monkeypatch.setattr(logging_sub, "AUDIT_LOG", tmp_path / "audit.jsonl")
     monkeypatch.setattr(logging_sub, "FEEDBACK_LOG", tmp_path / "feedback.jsonl")
     monkeypatch.setattr(logging_sub, "METRICS_LOG", tmp_path / "metrics.jsonl")
+
+
+@pytest.fixture(autouse=True)
+def cost_controls_off(tmp_path, monkeypatch):
+    """No request limit, no spend cap and a throw-away ledger, unless a test turns them on itself."""
+    from app.services import rate_limit
+
+    monkeypatch.setenv("RATE_LIMIT_PER_MINUTE", "0")
+    monkeypatch.delenv("TRUST_FORWARDED_FOR", raising=False)
+    monkeypatch.setenv("OPENAI_SPEND_CAP_USD", "")  # empty, so load_dotenv() cannot bring back a cap from .env
+    monkeypatch.setenv("OPENAI_SPEND_LEDGER", str(tmp_path / "openai_spend.json"))
+    rate_limit.reset()

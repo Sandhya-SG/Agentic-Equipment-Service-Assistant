@@ -2,7 +2,7 @@ import logging
 import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -12,10 +12,11 @@ from app.routes.reviews import router as reviews_router
 from app.schemas.feedback import FeedbackRequest, FeedbackResponse
 from app.schemas.request import ChatRequest
 from app.schemas.response import ChatResponse
-from app.services import review_queue
+from app.services import rate_limit, review_queue
 from app.services.chat_service import handle_chat
 from app.services.graph_runner import warm_up
 from asa.components import logging_sub
+from asa.components.llm import read_ledger, spend_cap
 from asa.components.tracing import flush_tracing
 from asa.ingestion.metadata import DOCUMENT_REGISTRY
 
@@ -67,7 +68,22 @@ async def equipment():
 
 # Plain `def` so FastAPI runs it in a threadpool: the agent run blocks.
 @app.post("/api/chat", response_model=ChatResponse)
-def chat(request: ChatRequest):
+def chat(request: ChatRequest, http_request: Request):
+    # Every chat request can cost model calls, so a client that sends too many is turned away before any work is done.
+    peer = http_request.client.host if http_request.client else None
+    wait = rate_limit.check(rate_limit.client_key(peer, http_request.headers.get("x-forwarded-for")))
+    if wait:
+        seconds = max(1, int(wait + 0.999))
+        return JSONResponse(
+            status_code=429,
+            headers={"Retry-After": str(seconds)},
+            content={
+                "status": "unavailable",
+                "error": "rate_limited",
+                "response": f"Too many requests. Please wait {seconds} seconds and try again.",
+                "retry_after_s": seconds,
+            },
+        )
     # Without a conversation_id every request gets its own, so a pending clarification is never shared between
     # callers. (A fixed fallback id made unrelated API clients continue each other's clarification.) A client that
     # wants a multi-turn conversation sends the conversation_id returned in the first response.
@@ -99,4 +115,16 @@ def monitoring(
         "alerts": logging_sub.check_alerts(summary),
         "audit_integrity": logging_sub.verify_audit_integrity() if verify else None,
         "review": review_queue.summary(),
+        "spend": _spend(),
+    }
+
+
+def _spend() -> dict:
+    """This pod's estimated OpenAI spend against its cap (an estimate, not the bill; each pod keeps its own ledger)."""
+    ledger, cap = read_ledger(), spend_cap()
+    return {
+        "estimated_usd": round(ledger["estimated_usd"], 4),
+        "calls": ledger["calls"],
+        "cap_usd": cap,
+        "cap_reached": cap is not None and ledger["estimated_usd"] >= cap,
     }
