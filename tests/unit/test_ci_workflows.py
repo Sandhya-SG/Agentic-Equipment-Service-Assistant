@@ -63,3 +63,24 @@ def test_images_are_published_only_after_the_gate_and_only_from_main(ci):
     build = ci["build"]
     assert "github.ref == 'refs/heads/main'" in build["env"]["PUBLISH"]
     assert "promptfoo" in build["needs"]
+
+
+# --- the release approval ---
+
+
+def test_the_release_job_waits_for_the_production_environment_after_the_build(ci):
+    release = ci["release"]
+    assert release["environment"] == "production"  # the required reviewers live on this environment
+    assert release["needs"] == ["build"]
+    assert "github.ref == 'refs/heads/main'" in release["if"] and "push" in release["if"]
+
+
+def test_the_release_job_adds_a_tag_to_the_published_image_and_never_rebuilds_or_moves_latest(ci):
+    text = " ".join(step.get("run", "") for step in ci["release"]["steps"])
+    assert "imagetools create --tag" in text and ":sha-" in text and ":release-" in text
+    assert "docker build " not in text and ":latest" not in text
+    assert "digest mismatch" in text  # the approved digest must equal the built one
+
+
+def test_the_release_job_can_write_packages_and_nothing_else_it_does_not_need(ci):
+    assert ci["release"]["permissions"] == {"contents": "read", "packages": "write"}
