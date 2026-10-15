@@ -85,3 +85,44 @@ def test_the_release_job_adds_a_tag_to_the_published_image_and_never_rebuilds_or
 
 def test_the_release_job_can_write_packages_and_nothing_else_it_does_not_need(ci):
     assert ci["release"]["permissions"] == {"contents": "read", "packages": "write"}
+
+
+# --- the offline evaluation gate and the retrieval job ---
+
+
+def test_the_offline_evaluation_fails_the_job_when_a_target_is_missed(ci):
+    steps = ci["offline-evals"]["steps"]
+    run = next(s for s in steps if s.get("name") == "Run the offline evaluation")["run"]
+    assert "run_eval.py --enforce" in run
+    assert "continue-on-error" not in ci["offline-evals"]
+
+
+def test_the_retrieval_job_builds_the_index_before_it_measures_and_never_blocks_the_release(ci):
+    job = ci["retrieval-eval"]
+    names = [s.get("name") for s in job["steps"]]
+    assert names.index("Build the manual index") < names.index("Run the retrieval evaluation (report only)")
+    ingest = next(s for s in job["steps"] if s.get("name") == "Build the manual index")
+    assert ingest["run"].strip() == "python scripts/ingest.py" and "continue-on-error" not in ingest
+    measure = next(s for s in job["steps"] if s.get("name") == "Run the retrieval evaluation (report only)")
+    assert measure["continue-on-error"] is True and "retrieval_eval.py" in measure["run"]
+    assert "--enforce" not in measure["run"]  # report only until a few green runs show the numbers are stable
+    assert "retrieval-eval" not in ci["build"]["needs"] and "retrieval-eval" not in ci["release"]["needs"]
+
+
+def test_the_retrieval_job_needs_no_key_and_uploads_its_reports(ci):
+    job = ci["retrieval-eval"]
+    assert "OPENAI_API_KEY" not in str(job) and "secrets." not in str(job).replace("secrets.GITHUB_TOKEN", "")
+    upload = next(s for s in job["steps"] if s.get("name") == "Upload the retrieval report")
+    assert upload["if"] == "always()" and "retrieval-report.json" in upload["with"]["path"]
+
+
+def test_a_suite_that_cannot_run_is_skipped_not_failed_so_enforce_is_safe_without_an_index():
+    import sys
+
+    sys.path.insert(0, str(WORKFLOWS.parents[1] / "eval"))
+    import run_eval
+
+    report = {"retrieval": {"available": False, "reason": "no index"}, "injection": {"block_rate_all": 1.0}}
+    targets = {"retrieval": {"area_hit_at_5": {"min": 0.85}}, "injection": {"block_rate_all": {"min": 0.9}}}
+    rows = run_eval.check_targets(report, targets)
+    assert [(row["suite"], row["met"]) for row in rows] == [("injection", True)]
