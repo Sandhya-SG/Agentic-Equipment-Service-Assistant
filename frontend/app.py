@@ -3,6 +3,7 @@ import os
 import re
 from urllib import error as urllib_error
 from urllib import request as urllib_request
+from urllib.parse import urlparse
 
 from flask import Flask, jsonify, render_template, request
 
@@ -82,6 +83,32 @@ def review_status(review_id):
     if not REVIEW_ID.fullmatch(review_id):
         return jsonify({"detail": "no such review"}), 404
     return _backend_json("GET", f"/api/review-status/{review_id}")
+
+
+# --- Monitoring: the page, and a proxy to the backend's /api/monitoring ----------------------------------------------
+# The proxy forwards the operator's token and nothing more: the BACKEND checks it. The page is only a readable view.
+
+
+def _safe_link(value):
+    """A link for the page only when it is an http(s) address (never javascript: or data:)."""
+    parsed = urlparse((value or "").strip())
+    return value.strip() if parsed.scheme in ("http", "https") and parsed.netloc else ""
+
+
+@app.route("/monitor")
+def monitor_page():
+    return render_template("monitor.html", langfuse_url=_safe_link(os.getenv("LANGFUSE_URL", "")))
+
+
+@app.route("/api/monitor/data")
+def monitor_data():
+    limit = request.args.get("limit", "200")
+    verify = request.args.get("verify", "true")
+    if not (limit.isdigit() and 1 <= int(limit) <= 5000) or verify not in ("true", "false"):
+        return jsonify({"detail": "limit must be 1 to 5000 and verify true or false"}), 400
+    token = request.headers.get("X-Monitor-Token")
+    headers = {"X-Monitor-Token": token} if token else {}
+    return _backend_json("GET", f"/api/monitoring?limit={int(limit)}&verify={verify}", headers=headers, timeout=60)
 
 
 @app.route("/api/equipment")

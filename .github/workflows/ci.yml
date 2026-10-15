@@ -272,10 +272,11 @@ jobs:
   # ---------------------------------------------------------------------
   # 6. Offline evaluation — injection guard and safety rules against the
   #    datasets in eval/. No model call, no key, no cost.
-  #    Report only for now: the numbers are published as a build artefact and
-  #    in the job summary. The quality pins in tests/unit/test_eval_offline.py
-  #    (run by the unit-tests job) already fail the build if the guard or the
-  #    rules get weaker. To make every target blocking, add --enforce below.
+  #    --enforce: a missed target fails the job. Retrieval needs the manual index
+  #    and is skipped here (a suite that cannot run has no value to judge); it has
+  #    its own job below. The numbers are also published as a build artefact and in
+  #    the job summary, and the quality pins in tests/unit/test_eval_offline.py
+  #    (unit-tests job) fail the build if the guard or the rules get weaker.
   # ---------------------------------------------------------------------
   offline-evals:
     name: Offline Evaluation
@@ -297,7 +298,7 @@ jobs:
 
       - name: Run the offline evaluation
         run: |
-          python eval/run_eval.py --out eval-report.json | tee eval-summary.txt
+          python eval/run_eval.py --enforce --out eval-report.json | tee eval-summary.txt
           {
             echo '### Offline evaluation'
             echo '```'
@@ -311,6 +312,67 @@ jobs:
         with:
           name: offline-eval-report
           path: eval-report.json
+
+  # ---------------------------------------------------------------------
+  # 7. Retrieval evaluation — builds the manual index from the PDFs in the
+  #    repository (the index itself is gitignored), then measures Hit Rate@k, MRR
+  #    and equipment isolation with the local embedding model. No OpenAI call, no
+  #    key, no cost.
+  #    Report only for now: the index build must succeed (a failure there is a real
+  #    problem), but a missed retrieval target does not fail the job until a few
+  #    green runs show the numbers are stable. Not part of the image release.
+  # ---------------------------------------------------------------------
+  retrieval-eval:
+    name: Retrieval Evaluation
+    runs-on: ubuntu-latest
+    needs: [lint]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Cache the embedding model
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: embedding-model-all-MiniLM-L6-v2
+
+      - name: Build the manual index
+        run: python scripts/ingest.py
+
+      - name: Run the retrieval evaluation (report only)
+        continue-on-error: true
+        run: |
+          python eval/retrieval_eval.py --out retrieval-report.json | tee retrieval-summary.txt
+          python eval/run_eval.py --out eval-report-full.json | tee eval-summary-full.txt
+          {
+            echo '### Retrieval evaluation'
+            echo '```'
+            cat retrieval-summary.txt
+            echo '```'
+            echo '### All offline targets, with the index'
+            echo '```'
+            grep -E "retrieval|targets met" eval-summary-full.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the retrieval report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: retrieval-eval-report
+          path: |
+            retrieval-report.json
+            eval-report-full.json
 
   # =======================================================================
   # COMING LATER — placeholder jobs, intentionally not active yet.

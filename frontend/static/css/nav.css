@@ -1,0 +1,9 @@
+/* The navigation shared by the assistant, expert review and monitoring pages. */
+.site-nav { display: flex; flex-wrap: wrap; gap: 6px; }
+.site-nav a { padding: 4px 12px; border: 1px solid #d9dde6; border-radius: 999px; color: #1f5fbf; font-size: 13px; text-decoration: none; background: transparent; }
+.site-nav a:hover { background: rgba(31, 95, 191, 0.08); }
+.site-nav a[aria-current="page"] { background: #1f5fbf; border-color: #1f5fbf; color: #fff; }
+@media (prefers-color-scheme: dark) {
+    .bar .site-nav a { color: #6ea4ff; border-color: #2f3750; }
+    .bar .site-nav a[aria-current="page"] { background: #6ea4ff; border-color: #6ea4ff; color: #12151c; }
+}

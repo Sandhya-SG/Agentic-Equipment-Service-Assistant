@@ -172,3 +172,109 @@ def test_the_banner_wording_matches_the_backend():
         review_queue.REJECTED_MESSAGE,
     ):
         assert message in script, message
+
+
+# --- the reviewer help ---
+
+
+def test_the_review_page_has_a_help_button_and_a_closed_help_panel():
+    page = client.get("/review").get_data(as_text=True)
+    assert 'id="help-toggle"' in page and 'aria-expanded="false"' in page and 'aria-controls="help"' in page
+    panel = page.split('id="help"')[1].split("</section>")[0]
+    assert "hidden" in page.split('id="help"')[1].split(">")[0]  # closed until the reviewer asks for it
+    for heading in (
+        "1. Why a case is here",
+        "2. Understanding the assistant's decision",
+        "3. Reviewing the evidence",
+        "4. Making a decision",
+        "5. Safety and accountability",
+        "Before you record a decision",
+    ):
+        assert heading in panel, heading
+
+
+def test_the_help_explains_the_three_decisions_without_overstating_them():
+    panel = client.get("/review").get_data(as_text=True).split('id="help"')[1].split("</section>")[0]
+    assert "does not authorise the engineer to proceed" in panel  # confirming a stop is not permission to act
+    assert "Never use Correct to get around a mandatory safety prohibition" in panel
+    assert "at least 5 characters" in panel  # matches the backend's rule for a reason
+    assert "cite the manual" in panel
+    assert "None recorded" in panel and "does not mean a citation was checked" in panel
+
+
+def test_the_help_says_the_checklist_is_a_reminder_and_not_a_control():
+    panel = client.get("/review").get_data(as_text=True).split('id="help"')[1].split("</section>")[0]
+    assert panel.count('<input type="checkbox">') == 6
+    assert "does not check these boxes or enforce them" in panel
+
+
+def test_the_help_matches_what_the_backend_enforces():
+    from app.services import review_queue
+
+    panel = client.get("/review").get_data(as_text=True).split('id="help"')[1].split("</section>")[0]
+    assert f"at least {review_queue.MIN_REASON_CHARS} characters" in panel  # the help quotes the backend's own limit
+
+
+def test_every_hazard_the_rules_can_find_is_explained_in_the_page():
+    """If a hazard category is added to the safety rules, the reviewer help must explain it."""
+    import re
+
+    from asa.guardrails.safety_rules import HARD_HALT_TRIGGERS
+
+    script = (JS / "review.js").read_text(encoding="utf-8")
+    block = script.split("const HAZARDS = {")[1].split("};")[0]
+    explained = set(re.findall(r"^\s+(\w+):", block, flags=re.MULTILINE))
+    assert set(HARD_HALT_TRIGGERS) | {"safety_control_defeat"} <= explained
+
+
+def test_only_the_hazards_that_withhold_an_answer_are_described_as_escalate_only():
+    from asa.guardrails.safety_rules import ESCALATE_ONLY_HAZARDS
+
+    script = (JS / "review.js").read_text(encoding="utf-8")
+    block = script.split("const HAZARDS = {")[1].split("};")[0]
+    for line in block.splitlines():
+        if "Escalate-only" in line:
+            assert line.strip().split(":")[0] in ESCALATE_ONLY_HAZARDS, line
+
+
+def test_the_case_view_explains_an_empty_citation_list_without_markup():
+    script = (JS / "review.js").read_text(encoding="utf-8")
+    assert "A safety rule can stop a request before the manual is searched" in script
+    assert "innerHTML" not in script  # the explanations are plain text too
+
+
+def test_times_are_labelled_utc_and_the_main_fields_have_a_hint():
+    script = (JS / "review.js").read_text(encoding="utf-8")
+    assert '+ " UTC"' in script  # the list and the case both go through the same function
+    assert "CONFIDENCE_HINT" in script and "WHY_HINTS" in script
+    assert "innerHTML" not in script
+
+
+def test_every_reason_a_case_can_be_opened_has_a_hint_that_matches_the_backend():
+    """The triggers the backend can set must each have a hint in the page (a new trigger needs one)."""
+    import re
+
+    from app.services import chat_service
+
+    script = (JS / "review.js").read_text(encoding="utf-8")
+    hints = set(re.findall(r"^\s+(\w+):", script.split("const WHY_HINTS = {")[1].split("};")[0], flags=re.MULTILINE))
+    labels = set(
+        re.findall(r"^\s+(\w+):", script.split("function whyText")[1].split("}[item.trigger]")[0], flags=re.MULTILINE)
+    ) | {
+        "halted",
+        "escalated",
+        "escalate_only",
+        "low_confidence",
+        "sample",
+    }
+    triggers = set()
+    for status, escalate_only, confidence, sampled in (
+        ("halted", False, None, False),
+        ("escalated", False, None, False),
+        ("escalated", True, None, False),
+        ("ok", False, 0.01, False),
+    ):
+        explanation = {} if confidence is not None else None
+        triggers.add(chat_service._review_trigger(status, escalate_only, explanation, confidence))
+    triggers.add("sample")  # set by chance when REVIEW_SAMPLE_RATE is on
+    assert triggers <= hints and triggers <= labels, triggers - hints

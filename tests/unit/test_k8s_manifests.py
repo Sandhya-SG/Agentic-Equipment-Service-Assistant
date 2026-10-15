@@ -98,3 +98,20 @@ def test_the_cluster_has_the_cost_controls_and_the_ledger_is_on_the_writable_log
 def test_the_secret_script_can_store_the_review_token():
     script = (K8S.parent / "scripts" / "k8s_secret.py").read_text(encoding="utf-8")
     assert "REVIEWER_TOKEN" in script
+
+
+def test_the_monitor_token_comes_from_the_secret_and_is_optional(backend):
+    container = next(c for c in backend["spec"]["template"]["spec"]["containers"] if c["name"] == "backend")
+    env = {e["name"]: e for e in container["env"]}
+    assert env["MONITOR_TOKEN"]["valueFrom"]["secretKeyRef"]["key"] == "MONITOR_TOKEN"
+    assert env["MONITOR_TOKEN"]["valueFrom"]["secretKeyRef"]["optional"] is True  # unset: monitoring answers 503 here
+
+
+def test_the_monitor_token_is_never_in_a_manifest_as_a_value_and_the_secret_script_can_store_it():
+    root = K8S.parent
+    for name in ("k8s/backend.yaml", "k8s/configmap.yaml", "docker-compose.yml"):
+        for line in (root / name).read_text(encoding="utf-8").splitlines():
+            if "MONITOR_TOKEN" in line and ":" in line and "${MONITOR_TOKEN" not in line:
+                assert "secretKeyRef" in line or line.strip().startswith(("#", "- name:")), line
+    assert 'MONITOR_TOKEN: "replace-me"' in (K8S / "secret.example.yaml").read_text(encoding="utf-8")
+    assert "MONITOR_TOKEN" in (root / "scripts" / "k8s_secret.py").read_text(encoding="utf-8")

@@ -1,0 +1,5 @@
+<nav class="site-nav" aria-label="Main">
+    <a href="/"{% if active == 'assistant' %} aria-current="page"{% endif %}>Assistant</a>
+    <a href="/review"{% if active == 'review' %} aria-current="page"{% endif %}>Expert review</a>
+    <a href="/monitor"{% if active == 'monitor' %} aria-current="page"{% endif %}>Monitoring</a>
+</nav>

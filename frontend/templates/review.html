@@ -5,12 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Expert review - Equipment Service Assistant</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/review.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/nav.css') }}">
 </head>
 <body>
 <header class="bar">
     <h1>Expert review</h1>
     <span id="who" class="who"></span>
-    <a class="link" href="/">Assistant</a>
+    <button id="help-toggle" type="button" class="secondary" aria-controls="help" aria-expanded="false">Reviewer help</button>
+    {% set active = 'review' %}{% include '_nav.html' %}
 </header>
 
 <main>
@@ -18,6 +20,60 @@
         Answers the assistant sent to a qualified reviewer. A stop stays a stop unless you write corrected guidance and
         cite the manual. Every decision is recorded with your name in the audit trail.
     </p>
+
+
+    <section id="help" class="panel help" hidden aria-label="Reviewer help">
+        <h2>Reviewer help</h2>
+
+        <h3>1. Why a case is here</h3>
+        <ul>
+            <li><strong>stopped</strong>: the assistant halted the request. A rule or the Safety Agent decided the action must not proceed.</li>
+            <li><strong>escalated</strong>: the evidence was not enough, or the task is hazardous, so a person must take over.</li>
+            <li><strong>escalate-only hazard</strong>: the question names high voltage or stored energy. No procedure is given, only a referral.</li>
+            <li><strong>low confidence</strong>: the answer was given, but the assistant was not confident enough in it.</li>
+            <li><strong>quality sample</strong>: an ordinary answer picked at random for a quality check.</li>
+        </ul>
+
+        <h3>2. Understanding the assistant's decision</h3>
+        <ul>
+            <li><strong>halt</strong>: the requested action must not proceed. <strong>escalate</strong>: hand the task to a qualified person.</li>
+            <li><strong>Confidence</strong>: how well the answer is supported by the manual passages. It is shown when the assistant gave an answer; a stop from a rule has none.</li>
+            <li><strong>Hazards</strong>: what the safety rules found in the request or the answer. Each identifier is explained below.</li>
+        </ul>
+        <dl id="hazard-glossary"></dl>
+
+        <h3>3. Reviewing the evidence</h3>
+        <ul>
+            <li><strong>Manual passages</strong> are the quotes the answer relied on, with document, page and section. Check that they say what the answer says.</li>
+            <li><strong>None recorded</strong> is normal for a request a safety rule stopped: the rule acted before the manual was searched. It does not mean a citation was checked. The rule that applied is the hazard listed in the case.</li>
+            <li>The question is shown as the assistant received it, so you see the same words it did.</li>
+        </ul>
+
+        <h3>4. Making a decision</h3>
+        <ul>
+            <li><strong>Confirm</strong>: the assistant's decision was right. Confirming a stop <strong>does not authorise the engineer to proceed</strong>; it records that the stop was right.</li>
+            <li><strong>Correct</strong>: you write the corrected guidance. It must cite the manual (one source per line) and a reason, and it is checked like any answer. Guidance that tells the engineer to bypass, defeat or disable a safety control is refused. Never use Correct to get around a mandatory safety prohibition.</li>
+            <li><strong>Reject</strong>: the answer is wrong, unsupported or unsuitable. A reason of at least 5 characters is required. The engineer is told the answer was withdrawn and must not rely on it.</li>
+        </ul>
+
+        <h3>5. Safety and accountability</h3>
+        <ul>
+            <li>Every decision is recorded with your name, the time and your reason in the audit trail. A case takes one decision only.</li>
+            <li>Nothing is executed on the equipment. The engineer reads your outcome on the assistant page and decides what to do.</li>
+            <li>Times on this page are in UTC (Singapore time is eight hours ahead).</li>
+        </ul>
+
+        <h3>Before you record a decision</h3>
+        <p class="muted">A reminder only. This page does not check these boxes or enforce them.</p>
+        <ul class="checklist">
+            <li><label><input type="checkbox"> I understand the engineer's original question.</label></li>
+            <li><label><input type="checkbox"> I have checked the equipment and the hazards listed.</label></li>
+            <li><label><input type="checkbox"> I have read the manual passages and the safety rule that applied.</label></li>
+            <li><label><input type="checkbox"> I understand why the assistant halted or escalated.</label></li>
+            <li><label><input type="checkbox"> My decision does not bypass a mandatory safety control.</label></li>
+            <li><label><input type="checkbox"> I have written a clear reason.</label></li>
+        </ul>
+    </section>
 
     <section id="login" class="panel">
         <h2>Sign in</h2>

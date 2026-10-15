@@ -68,6 +68,9 @@ spec:
             - name: VERSION_TOKEN                   # protects GET /version; without it the endpoint is off here
               valueFrom:
                 secretKeyRef: {name: aem-secrets, key: VERSION_TOKEN, optional: true}
+            - name: MONITOR_TOKEN                   # protects GET /api/monitoring and the /monitor page; without it the endpoint answers 503 here
+              valueFrom:
+                secretKeyRef: {name: aem-secrets, key: MONITOR_TOKEN, optional: true}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true            # writable paths are the mounted volumes below
