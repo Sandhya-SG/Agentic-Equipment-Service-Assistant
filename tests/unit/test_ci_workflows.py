@@ -77,7 +77,8 @@ def test_the_release_job_waits_for_the_production_environment_after_the_build(ci
 
 def test_the_release_job_adds_a_tag_to_the_published_image_and_never_rebuilds_or_moves_latest(ci):
     text = " ".join(step.get("run", "") for step in ci["release"]["steps"])
-    assert "imagetools create --tag" in text and ":sha-" in text and ":release-" in text
+    assert "imagetools create --prefer-index=false --tag" in text  # an exact copy: same manifest, same digest
+    assert ":sha-" in text and ":release-" in text
     assert "docker build " not in text and ":latest" not in text
     assert "digest mismatch" in text  # the approved digest must equal the built one
 
