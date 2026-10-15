@@ -19,6 +19,10 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       CLARIFICATION_SECRET: ${CLARIFICATION_SECRET:-}
       REVIEWER_TOKEN: ${REVIEWER_TOKEN:-}
+      # Cost controls: an estimated-spend cap (0 or unset = none) and a per-client request limit per minute.
+      OPENAI_SPEND_CAP_USD: ${OPENAI_SPEND_CAP_USD:-}
+      OPENAI_SPEND_LEDGER: /app/logs/openai_spend.json
+      RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-30}
       REVIEW_SAMPLE_RATE: ${REVIEW_SAMPLE_RATE:-0}
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}

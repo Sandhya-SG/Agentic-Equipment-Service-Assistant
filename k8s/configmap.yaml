@@ -17,3 +17,11 @@ data:
   # that stall startup (and fail the startup probe) when the cluster has no DNS or internet.
   HF_HUB_OFFLINE: "1"
   TRANSFORMERS_OFFLINE: "1"
+  # Cost controls. The spend cap is an ESTIMATE kept per pod (each pod has its own ledger on its log volume), so the
+  # most the cluster can spend by this measure is the cap times the replicas. Change it, then restart the pods.
+  OPENAI_SPEND_CAP_USD: "0.25"
+  OPENAI_SPEND_LEDGER: "/app/logs/openai_spend.json"
+  # At most this many chat requests per client per minute, counted per pod. The backend is reachable only through the
+  # frontend (network policy), which passes the browser's address, so X-Forwarded-For can be trusted here.
+  RATE_LIMIT_PER_MINUTE: "30"
+  TRUST_FORWARDED_FOR: "true"

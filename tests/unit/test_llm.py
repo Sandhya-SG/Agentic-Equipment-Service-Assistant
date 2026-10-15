@@ -306,7 +306,7 @@ def test_the_token_use_of_a_request_reaches_the_audit_record(tmp_path, monkeypat
 def ledger(tmp_path, monkeypatch):
     path = tmp_path / "spend.json"
     monkeypatch.setenv("OPENAI_SPEND_LEDGER", str(path))
-    monkeypatch.delenv("OPENAI_SPEND_CAP_USD", raising=False)
+    monkeypatch.setenv("OPENAI_SPEND_CAP_USD", "")  # empty, so load_dotenv() cannot bring back a cap from .env
     return path
 
 

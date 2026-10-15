@@ -151,6 +151,17 @@ jobs:
           path: security-results.xml
 
   # ---------------------------------------------------------------------
+  # 4b. Promptfoo API and prompt-injection tests against a running backend
+  #     (promptfoo-tests-ci.yml, free tier: no key, no cost). The image build
+  #     below needs this job, so a failing security evaluation cannot release.
+  #     The known-gaps suite inside it is reported but does not gate.
+  # ---------------------------------------------------------------------
+  promptfoo:
+    name: Promptfoo
+    needs: [lint]
+    uses: ./.github/workflows/promptfoo-tests-ci.yml
+
+  # ---------------------------------------------------------------------
   # 5. Build, scan and publish both application containers
   #    - every run: build both images and scan them with Trivy
   #    - push to main only: publish to GHCR, tagged with the commit SHA
@@ -159,7 +170,7 @@ jobs:
   build:
     name: Build Containers
     runs-on: ubuntu-latest
-    needs: [unit-tests, security-tests, dependency-scan]
+    needs: [unit-tests, security-tests, promptfoo, dependency-scan]
     permissions:
       contents: read
       packages: write
@@ -209,6 +220,52 @@ jobs:
           docker tag "$IMAGE:scan" "$IMAGE:latest"
           docker push "$IMAGE:sha-${GITHUB_SHA::7}"
           docker push "$IMAGE:latest"
+
+  # ---------------------------------------------------------------------
+  # 5b. Release approval — a human decides which published build may be deployed
+  #     - push to main only, after every job above has passed and both images are published
+  #     - the job is bound to the "production" environment, which carries the required
+  #       reviewers (Settings > Environments). It waits there until a reviewer approves.
+  #     - on approval it adds release-<commit> to the SAME images (the digest does not change:
+  #       nothing is rebuilt) and prints the digests. scripts/deploy_release.py deploys only
+  #       release-<commit> tags, so an unapproved build cannot be deployed by accident.
+  #     Without required reviewers on the environment this job would run unattended, so the
+  #     environment must be set up before the first merge (docs/runbook.md, section 5).
+  # ---------------------------------------------------------------------
+  release:
+    name: Release (needs approval)
+    runs-on: ubuntu-latest
+    needs: [build]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment: production
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Promote the approved images
+        run: |
+          OWNER="${GITHUB_REPOSITORY_OWNER,,}"
+          SHORT="${GITHUB_SHA::7}"
+          echo "### Release approved: release-$SHORT" >> "$GITHUB_STEP_SUMMARY"
+          for service in backend frontend; do
+            IMAGE="ghcr.io/$OWNER/asa-$service"
+            docker buildx imagetools create --tag "$IMAGE:release-$SHORT" "$IMAGE:sha-$SHORT"
+            BUILT=$(docker buildx imagetools inspect "$IMAGE:sha-$SHORT" | awk '/^Digest:/ {print $2; exit}')
+            APPROVED=$(docker buildx imagetools inspect "$IMAGE:release-$SHORT" | awk '/^Digest:/ {print $2; exit}')
+            if [ -z "$BUILT" ] || [ "$BUILT" != "$APPROVED" ]; then
+              echo "digest mismatch for $service: built '$BUILT', approved '$APPROVED'"
+              exit 1
+            fi
+            echo "- $service: \`$IMAGE@$APPROVED\`" >> "$GITHUB_STEP_SUMMARY"
+          done
+          echo "Deploy with: python scripts/deploy_release.py release-$SHORT --apply" >> "$GITHUB_STEP_SUMMARY"
 
   # ---------------------------------------------------------------------
   # 6. Offline evaluation — injection guard and safety rules against the

@@ -8,23 +8,11 @@ name: Promptfoo Tests
 # The live suites (live-api.yaml, perf.yaml) need the real key and the ChromaDB index (built locally from the PDFs with scripts/ingest.py), so they run locally.
 # The dependency versions are pinned (promptfoo in promptfoo-tests/package-lock.json), unlike "@latest".
 
+# It is called by ci.yml as the "promptfoo" job, and the image build there NEEDS it: a failed security evaluation
+# blocks the release. (It used to run on its own with path filters, which nothing could depend on.) It can also be
+# started by hand from the Actions tab.
 on:
-  push:
-    branches: [main]
-    paths:
-      - "promptfoo-tests/**"
-      - "eval/datasets/**"
-      - "app/**"
-      - "src/asa/guardrails/**"
-      - ".github/workflows/promptfoo-tests-ci.yml"
-  pull_request:
-    branches: [main]
-    paths:
-      - "promptfoo-tests/**"
-      - "eval/datasets/**"
-      - "app/**"
-      - "src/asa/guardrails/**"
-      - ".github/workflows/promptfoo-tests-ci.yml"
+  workflow_call:
   workflow_dispatch:
 
 permissions:
@@ -60,7 +48,7 @@ jobs:
         # Not requirements-backend.txt: that pulls the ML stack (torch, sentence-transformers, chromadb), which this
         # suite never uses and which is gigabytes on a runner. Without the agents' packages the app still starts, its
         # warm-up fails gracefully ("agents not ready") and /health stays up, which is exactly the free-tier case.
-        # Checked in a clean virtual environment: all 86 tests pass with just these packages.
+        # Checked in a clean virtual environment: the whole free suite passes with just these packages.
         run: |
           python -m pip install --upgrade pip
           pip install "fastapi>=0.110.0" "uvicorn>=0.29.0" "pydantic>=2.6.0" "python-dotenv>=1.0.0" "openai>=1.40.0"
@@ -72,6 +60,8 @@ jobs:
       - name: Start the backend with a fake key
         env:
           OPENAI_API_KEY: sk-fake-key-for-ci-no-model-is-called
+          # The suite sends far more than 30 chat requests from one address; the request limit is tested in tests/.
+          RATE_LIMIT_PER_MINUTE: "0"
         run: |
           nohup python -m uvicorn app.main:app --port 8000 > backend.log 2>&1 &
           echo "Waiting for the backend..."
@@ -88,7 +78,7 @@ jobs:
 
       - name: Run the Promptfoo free suite
         working-directory: promptfoo-tests
-        run: npx promptfoo eval -c free-api.yaml --no-cache --no-progress-bar --no-table -o free-results.json
+        run: npx promptfoo eval -c free-api.yaml --no-cache --no-progress-bar --no-table -o free-results.json -o free-report.html
 
       - name: Report the known gaps (not gating)
         if: always()
@@ -112,4 +102,5 @@ jobs:
           name: promptfoo-results
           path: |
             promptfoo-tests/free-results.json
+            promptfoo-tests/free-report.html
             promptfoo-tests/known-gaps-results.json
