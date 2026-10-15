@@ -256,7 +256,9 @@ jobs:
           echo "### Release approved: release-$SHORT" >> "$GITHUB_STEP_SUMMARY"
           for service in backend frontend; do
             IMAGE="ghcr.io/$OWNER/asa-$service"
-            docker buildx imagetools create --tag "$IMAGE:release-$SHORT" "$IMAGE:sha-$SHORT"
+            # --prefer-index=false makes an exact copy of the manifest. Without it, buildx wraps a single image in a
+            # new index, which has a different digest (the check below caught exactly that on the first release).
+            docker buildx imagetools create --prefer-index=false --tag "$IMAGE:release-$SHORT" "$IMAGE:sha-$SHORT"
             BUILT=$(docker buildx imagetools inspect "$IMAGE:sha-$SHORT" | awk '/^Digest:/ {print $2; exit}')
             APPROVED=$(docker buildx imagetools inspect "$IMAGE:release-$SHORT" | awk '/^Digest:/ {print $2; exit}')
             if [ -z "$BUILT" ] || [ "$BUILT" != "$APPROVED" ]; then
