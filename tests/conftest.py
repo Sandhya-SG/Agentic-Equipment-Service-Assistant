@@ -62,6 +62,11 @@ def cost_controls_off(tmp_path, monkeypatch):
 
     monkeypatch.setenv("RATE_LIMIT_PER_MINUTE", "0")
     monkeypatch.delenv("TRUST_FORWARDED_FOR", raising=False)
+    # Empty, not deleted: the application calls load_dotenv(), which would bring a real token back from a developer's .env
+    # (CI has no .env). A test that needs a token sets its own.
+    monkeypatch.setenv("MONITOR_TOKEN", "")
+    monkeypatch.setenv("REVIEWER_TOKEN", "")
+    monkeypatch.setenv("VERSION_TOKEN", "")
     monkeypatch.setenv("OPENAI_SPEND_CAP_USD", "")  # empty, so load_dotenv() cannot bring back a cap from .env
     monkeypatch.setenv("OPENAI_SPEND_LEDGER", str(tmp_path / "openai_spend.json"))
     rate_limit.reset()
