@@ -40,3 +40,9 @@ mlruns/
 
 # Generated evaluation reports (the real answers of a live run)
 eval/reports/
+
+# MLflow tracking database written by scripts/log_to_mlflow.py (the runs themselves are in mlruns/, ignored above)
+mlflow.db
+
+# Dated DeepEval outputs (kept local, like the Promptfoo results above); the harness writes deepeval-results.json
+deepeval-tests/deepeval-results*.json
