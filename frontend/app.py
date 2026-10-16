@@ -111,6 +111,38 @@ def monitor_data():
     return _backend_json("GET", f"/api/monitoring?limit={int(limit)}&verify={verify}", headers=headers, timeout=60)
 
 
+# --- Feedback: a helpful / not helpful rating of an answer, forwarded to the backend ------------------------------
+# The browser sends only what the backend accepts (a 12-character run id, a boolean, an optional short comment); anything
+# else is turned away here. Each backend pod keeps its own audit log and only a pod that has the run accepts its
+# rating, so an "unknown run" answer is tried again (the Service may pick another pod) before it is reported.
+RUN_ID = re.compile(r"^[0-9a-f]{12}$")
+FEEDBACK_ATTEMPTS = 4
+MAX_COMMENT_CHARS = 500
+
+
+@app.route("/api/feedback", methods=["POST"])
+def feedback():
+    payload = request.get_json(silent=True)
+    payload = payload if isinstance(payload, dict) else {}
+    run_id, helpful, comment = payload.get("run_id"), payload.get("helpful"), payload.get("comment")
+    valid = (
+        isinstance(run_id, str)
+        and RUN_ID.fullmatch(run_id)
+        and isinstance(helpful, bool)
+        and (comment is None or (isinstance(comment, str) and len(comment) <= MAX_COMMENT_CHARS))
+    )
+    if not valid:
+        return jsonify({"detail": "run_id (12 hex characters) and helpful (true or false) are required"}), 400
+    body = {"run_id": run_id, "helpful": helpful}
+    if comment:
+        body["comment"] = comment
+    for _ in range(FEEDBACK_ATTEMPTS):
+        response, status = _backend_json("POST", "/api/feedback", body, timeout=30)
+        if status != 404:
+            break
+    return response, status
+
+
 @app.route("/api/equipment")
 def equipment():
     try:

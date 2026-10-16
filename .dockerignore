@@ -1,0 +1,41 @@
+# What is sent to the Docker build. The Dockerfiles copy only what they name (app, src/asa, frontend, aem_documents,
+# scripts/ingest.py and the requirements files), so nothing here changes an image: it keeps secrets and large local folders
+# out of the build context. tests/unit/test_dockerfiles.py checks that nothing a Dockerfile copies is excluded.
+
+# Secrets and local settings
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Version control, virtual environments, caches
+.git
+.gitignore
+.venv
+venv
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.ruff_cache
+.vscode
+*.code-workspace
+
+# Local data and outputs (the backend image builds its own index from aem_documents)
+chroma_store
+logs
+mlruns
+.openai_spend.json
+eval/reports
+
+# Test tooling and documents that no image needs
+promptfoo-tests
+deepeval-tests
+tests
+docs
+k8s
+.github
+
+# Scripts: only the ingestion script is copied into the backend image
+scripts/*
+!scripts/ingest.py

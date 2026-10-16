@@ -927,3 +927,107 @@ button {
 .review-banner.rejected { border-color: #b3261e; background: rgba(179, 38, 30, 0.12); }
 .review-guidance { margin-top: 8px; white-space: pre-wrap; font-weight: 600; }
 .review-sources { margin-top: 6px; font-size: 13px; opacity: 0.85; }
+
+/* =========================================================
+   Agent trace and feedback under an answer
+   ========================================================= */
+
+.trace-line {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+
+    margin-top: 12px;
+
+    color: #4b5563;
+
+    font-size: 12px;
+}
+
+.trace-title {
+    font-weight: 650;
+}
+
+.trace-chip {
+    padding: 2px 9px;
+
+    border: 1px solid #d1d5db;
+    border-radius: 999px;
+
+    background: #f9fafb;
+
+    color: #374151;
+}
+
+.trace-arrow {
+    color: #9ca3af;
+}
+
+.trace-total {
+    color: #6b7280;
+}
+
+.trace-none {
+    font-style: italic;
+}
+
+.evidence-content ol {
+    margin: 4px 0 0;
+    padding-left: 20px;
+}
+
+.evidence-content ol li {
+    margin: 2px 0;
+}
+
+.feedback-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+
+    margin-top: 12px;
+    padding-top: 10px;
+
+    border-top: 1px solid #e5e7eb;
+
+    color: #4b5563;
+
+    font-size: 12px;
+}
+
+.feedback-button {
+    padding: 3px 12px;
+
+    border: 1px solid #d1d5db;
+    border-radius: 999px;
+
+    background: #ffffff;
+
+    color: #1f2937;
+
+    font: inherit;
+
+    cursor: pointer;
+}
+
+.feedback-button:hover:not(:disabled) {
+    background: #f3f4f6;
+}
+
+.feedback-button:disabled {
+    cursor: default;
+    opacity: 0.6;
+}
+
+.feedback-button[aria-pressed="true"] {
+    border-color: #1e7a45;
+    background: rgba(30, 122, 69, 0.12);
+
+    opacity: 1;
+}
+
+.feedback-note {
+    color: #6b7280;
+}

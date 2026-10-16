@@ -294,13 +294,17 @@ def deploy(args: argparse.Namespace) -> int:
             pinned_kustomization(kustomization.read_text(encoding="utf-8"), owner, digests), encoding="utf-8"
         )
         print(run([kubectl, "apply", "-k", str(target)]).strip())
-    wait_for_rollouts(kubectl)
 
-    problems = []
-    for service in SERVICES:
-        problems += digest_mismatches(pods(kubectl, service), service, digests[service])
-    if not problems:
-        problems += smoke_test(kubectl, commit)
+    # From here the cluster has changed: any failure is recorded and answered with the rollback command, never lost.
+    problems: list[str] = []
+    try:
+        wait_for_rollouts(kubectl)
+        for service in SERVICES:
+            problems += digest_mismatches(pods(kubectl, service), service, digests[service])
+        if not problems:
+            problems += smoke_test(kubectl, commit)
+    except DeployError as error:
+        problems.append(f"the rollout could not be completed or checked: {error}")
 
     record(
         {

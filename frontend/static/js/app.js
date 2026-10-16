@@ -216,11 +216,343 @@ function addList(
 }
 
 
+// The agents of the pipeline, as the API names them. Each has a short name for the chips under the answer and a
+// plain-words role for the list under "Evidence & details". Any other name is shown as it is.
+const AGENT_SHORT = {
+    request: "Request",
+    planning: "Planning",
+    agentic_rag: "Retrieval",
+    diagnostic: "Diagnostic",
+    safety: "Safety"
+};
+
+const AGENT_ROLE = {
+    request: "understands and checks the question",
+    planning: "decides what to look up",
+    agentic_rag: "searches the manual",
+    diagnostic: "works out the steps",
+    safety: "checks hazards and the manual's rules"
+};
+
+const FEEDBACK_STATUSES = ["ok", "halted", "escalated"];
+
+
+function traceSteps(data) {
+    if (!data || !Array.isArray(data.trace)) {
+        return [];
+    }
+
+    return data.trace.filter(
+        function (step) {
+            return step && typeof step.agent === "string";
+        }
+    );
+}
+
+
+function formatDuration(ms) {
+    const value = Number(ms) || 0;
+
+    return (
+        value < 1000
+            ? Math.round(value) + " ms"
+            : (value / 1000).toFixed(1) + " s"
+    );
+}
+
+
+function stepDetail(step) {
+    return Object.entries(step.detail || {}).slice(
+        0,
+        6
+    ).map(
+        function (entry) {
+            return (
+                entry[0].replace(/_/g, " ")
+                + ": "
+                + String(entry[1]).slice(0, 60)
+            );
+        }
+    ).join(", ");
+}
+
+
+// One line under the answer: which agents ran, in order, and the total time. Names and numbers only, as text.
+function addAgentTrace(card, data) {
+    const steps = traceSteps(data);
+
+    if (!steps.length) {
+        if (data.status === "halted") {
+            card.appendChild(
+                el(
+                    "div",
+                    "trace-line trace-none",
+                    "Stopped by a safety rule before any agent ran."
+                )
+            );
+        }
+
+        return;
+    }
+
+    const line = el(
+        "div",
+        "trace-line"
+    );
+
+    line.setAttribute(
+        "aria-label",
+        "Agents that ran, in order"
+    );
+
+    line.appendChild(
+        el(
+            "span",
+            "trace-title",
+            "Agents:"
+        )
+    );
+
+    let total = 0;
+
+    steps.forEach(
+        function (step, index) {
+            if (index > 0) {
+                const arrow = el(
+                    "span",
+                    "trace-arrow",
+                    "→"
+                );
+
+                arrow.setAttribute(
+                    "aria-hidden",
+                    "true"
+                );
+
+                line.appendChild(arrow);
+            }
+
+            total += Number(step.duration_ms) || 0;
+
+            line.appendChild(
+                el(
+                    "span",
+                    "trace-chip",
+                    AGENT_SHORT[step.agent] || step.agent
+                )
+            );
+        }
+    );
+
+    line.appendChild(
+        el(
+            "span",
+            "trace-total",
+            "· " + formatDuration(total)
+        )
+    );
+
+    card.appendChild(line);
+}
+
+
+// The full ordered list, inside "Evidence & details": each agent, what it does, how long it took, and its short outcome.
+function addTraceList(parent, data) {
+    const steps = traceSteps(data);
+
+    if (!steps.length) {
+        return;
+    }
+
+    const box = el(
+        "div",
+        "meta"
+    );
+
+    box.appendChild(
+        el(
+            "strong",
+            "",
+            "How this answer was produced"
+        )
+    );
+
+    const list = el("ol");
+
+    steps.forEach(
+        function (step) {
+            const role = AGENT_ROLE[step.agent];
+            const detail = stepDetail(step);
+
+            list.appendChild(
+                el(
+                    "li",
+                    "",
+                    (
+                        (AGENT_SHORT[step.agent] || step.agent)
+                        + " agent"
+                        + (role ? " (" + role + ")" : "")
+                        + ": "
+                        + formatDuration(step.duration_ms)
+                        + (detail ? " · " + detail : "")
+                    )
+                )
+            );
+        }
+    );
+
+    box.appendChild(list);
+
+    parent.appendChild(box);
+}
+
+
+// Helpful / not helpful under an answer that has a run id. The rating is kept with the saved conversation, so a
+// reloaded page shows it as given. A failed save leaves the buttons available to try again.
+function addFeedback(card, data) {
+    if (
+        !data.run_id
+        || !FEEDBACK_STATUSES.includes(data.status)
+    ) {
+        return;
+    }
+
+    const row = el(
+        "div",
+        "feedback-row"
+    );
+
+    const label = el(
+        "span",
+        "feedback-label",
+        "Was this answer helpful?"
+    );
+
+    const note = el(
+        "span",
+        "feedback-note"
+    );
+
+    note.setAttribute(
+        "role",
+        "status"
+    );
+
+    const yes = el(
+        "button",
+        "feedback-button",
+        "Helpful"
+    );
+
+    const no = el(
+        "button",
+        "feedback-button",
+        "Not helpful"
+    );
+
+    yes.type = "button";
+    no.type = "button";
+
+    row.appendChild(label);
+    row.appendChild(yes);
+    row.appendChild(no);
+    row.appendChild(note);
+
+    function rated(value) {
+        yes.disabled = true;
+        no.disabled = true;
+
+        yes.setAttribute(
+            "aria-pressed",
+            String(value === "helpful")
+        );
+
+        no.setAttribute(
+            "aria-pressed",
+            String(value === "not_helpful")
+        );
+
+        note.textContent = "Thanks for the feedback.";
+    }
+
+    async function send(helpful) {
+        yes.disabled = true;
+        no.disabled = true;
+        note.textContent = "Saving...";
+
+        try {
+            const response = await fetch(
+                "/api/feedback",
+                {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify(
+                        {
+                            run_id: data.run_id,
+                            helpful: helpful
+                        }
+                    )
+                }
+            );
+
+            if (!response.ok) {
+                throw new Error(
+                    "HTTP " + response.status
+                );
+            }
+
+            data.feedback = (
+                helpful
+                    ? "helpful"
+                    : "not_helpful"
+            );
+
+            saveConversations();
+
+            rated(data.feedback);
+        } catch (error) {
+            yes.disabled = false;
+            no.disabled = false;
+
+            note.textContent = (
+                "Could not save your feedback. Try again."
+            );
+        }
+    }
+
+    yes.addEventListener(
+        "click",
+        function () {
+            send(true);
+        }
+    );
+
+    no.addEventListener(
+        "click",
+        function () {
+            send(false);
+        }
+    );
+
+    if (data.feedback) {
+        rated(data.feedback);
+    }
+
+    card.appendChild(row);
+}
+
+
 function addEvidenceDetails(
     parent,
     data
 ) {
     const safety = data.safety || {};
+
+    const hasTrace = (
+        traceSteps(data).length > 0
+    );
 
     const hasPpe = (
         safety.ppe_required
@@ -245,6 +577,7 @@ function addEvidenceDetails(
         && !hasSources
         && !hasEscalationReason
         && !hasRunId
+        && !hasTrace
     ) {
         return;
     }
@@ -289,6 +622,11 @@ function addEvidenceDetails(
             )
         );
     }
+
+    addTraceList(
+        content,
+        data
+    );
 
     if (data.run_id) {
         content.appendChild(
@@ -813,12 +1151,22 @@ function appendAssistantMessage(
         );
     }
 
+    addAgentTrace(
+        card,
+        data
+    );
+
     addEvidenceDetails(
         card,
         data
     );
 
     addReviewBanner(
+        card,
+        data
+    );
+
+    addFeedback(
         card,
         data
     );
