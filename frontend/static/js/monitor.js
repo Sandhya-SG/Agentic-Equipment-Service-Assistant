@@ -84,11 +84,14 @@ function render(data) {
     } else {
         cards.appendChild(card("Requests", String(summary.runs), "in the window"));
         cards.appendChild(card("Blocked by the input guard", pct(summary.blocked_rate), "prompt-injection attempts and test traffic"));
+        cards.appendChild(card("Stopped (halted)", pct(summary.halted_rate), "a safety rule or the Safety Agent refused; each goes to human review"));
         cards.appendChild(card("Escalated to a person", pct(summary.escalation_rate)));
         cards.appendChild(card("Could not be answered", pct(summary.unavailable_rate), "model or index unavailable"));
         cards.appendChild(card("Median response time", seconds(summary.p50_latency_s), "blocked requests excluded"));
         cards.appendChild(card("95th percentile", seconds(summary.p95_latency_s)));
-        cards.appendChild(card("Average confidence", num(summary.avg_confidence, 2)));
+        cards.appendChild(card("Used the model", String(summary.llm_runs_measured || 0), "of " + summary.runs + " requests; blocked and rule-stopped ones make no model call"));
+        cards.appendChild(card("Average confidence", summary.confidence_scored_runs ? num(summary.avg_confidence, 2) : "–",
+            summary.confidence_scored_runs ? "over " + summary.confidence_scored_runs + " answers with a score" : "no answer has been scored yet"));
         cards.appendChild(card("Input tokens per request", num(summary.avg_input_tokens), "average, requests that used the model"));
         cards.appendChild(card("Model calls per request", num(summary.avg_model_calls, 1)));
         cards.appendChild(card("Estimated cost", usd(summary.estimated_cost_usd), "trend at gpt-4o-mini prices"));

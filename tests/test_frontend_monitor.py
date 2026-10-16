@@ -168,3 +168,9 @@ def test_every_page_links_to_the_other_two_and_marks_where_you_are(path, current
 def test_the_review_page_keeps_its_help_and_sign_in_after_the_navigation_change():
     page = client.get("/review").get_data(as_text=True)
     assert 'id="help-toggle"' in page and 'id="reviewer-token"' in page
+
+
+def test_the_cards_do_not_show_a_misleading_zero_confidence_and_say_how_many_requests_used_the_model():
+    script = (JS / "monitor.js").read_text(encoding="utf-8")
+    assert "summary.confidence_scored_runs ? num(summary.avg_confidence, 2) : " in script  # a dash when none was scored
+    assert '"Used the model"' in script and '"Stopped (halted)"' in script
