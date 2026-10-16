@@ -55,9 +55,15 @@ def third_party(folder):
     return {m: f for m, f in imported_modules(folder).items() if m not in sys.stdlib_module_names and m not in LOCAL}
 
 
-def distribution_of(module):
-    owners = metadata.packages_distributions().get(module)
-    return normal(owners[0]) if owners else None
+def owners_of(module):
+    """Every installed distribution that provides the module. Several can: `langgraph` comes from langgraph, langgraph-prebuilt,
+    langgraph-checkpoint ..., and which one is listed first differs between machines."""
+    return {normal(owner) for owner in metadata.packages_distributions().get(module, [])}
+
+
+def is_covered(module, listed):
+    """True when the module is provided by a listed distribution (or is a documented, stable transitive one)."""
+    return module in TRANSITIVE_OK or bool(owners_of(module) & listed)
 
 
 BACKEND_FOLDERS = ("app", "src/asa")
@@ -68,18 +74,43 @@ def test_every_package_the_backend_imports_is_in_the_backend_requirements(folder
     listed = requirement_names(ROOT / "requirements-backend.txt")
     missing = []
     for module, where in third_party(ROOT / folder).items():
-        owner = distribution_of(module)
-        if owner is None:
+        owners = owners_of(module)
+        if not owners and module not in TRANSITIVE_OK:
             missing.append(f"{module} (in {where}) is not installed here, so it cannot be checked")
-        elif owner not in listed and module not in TRANSITIVE_OK:
-            missing.append(f"{module} (distribution {owner}, imported in {where}) is not in requirements-backend.txt")
+        elif not is_covered(module, listed):
+            missing.append(f"{module} (from {sorted(owners)}, imported in {where}) is not in requirements-backend.txt")
     assert not missing, "the container would fail at import:\n  " + "\n  ".join(missing)
 
 
 def test_every_package_the_frontend_imports_or_runs_is_in_the_frontend_requirements():
     listed = requirement_names(ROOT / "requirements-frontend.txt")
-    needed = {distribution_of(m) for m in third_party(ROOT / "frontend")} | {"gunicorn"}  # the CMD starts gunicorn
-    assert needed - {None} <= listed, sorted((needed - {None}) - listed)
+    uncovered = [m for m in third_party(ROOT / "frontend") if not is_covered(m, listed)]
+    assert not uncovered, uncovered
+    assert "gunicorn" in listed  # the image's CMD starts gunicorn, which no source file imports
+
+
+# --- the rule itself, with a module that several distributions provide (this failed on the CI runner) ---
+
+
+def test_a_module_provided_by_several_distributions_is_covered_when_any_one_is_listed(monkeypatch):
+    monkeypatch.setattr(
+        metadata,
+        "packages_distributions",
+        lambda: {"langgraph": ["langgraph-prebuilt", "langgraph", "langgraph-checkpoint"], "numpy": ["numpy"]},
+    )
+    assert is_covered("langgraph", {"langgraph"})  # the listed one is not the first the machine reports
+    assert is_covered("langgraph", {"langgraph-checkpoint"})
+    assert not is_covered("langgraph", {"chromadb"})  # none of its distributions is listed
+    assert is_covered("numpy", set())  # a documented transitive dependency
+
+
+def test_distribution_names_are_compared_in_one_spelling(monkeypatch):
+    monkeypatch.setattr(metadata, "packages_distributions", lambda: {"dotenv": ["python-dotenv"], "fitz": ["PyMuPDF"]})
+    assert is_covered("dotenv", {"python-dotenv"}) and is_covered("fitz", requirement_names_from(["PyMuPDF>=1.24.0"]))
+
+
+def requirement_names_from(lines):
+    return {normal(re.split(r"[<>=!~\[; ]", line, maxsplit=1)[0]) for line in lines}
 
 
 def test_the_frontend_does_not_import_the_backend_or_the_agents():
