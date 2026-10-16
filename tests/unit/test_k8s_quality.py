@@ -290,8 +290,11 @@ def test_the_secret_keys_the_pods_ask_for_are_the_ones_the_example_and_the_scrip
     example = yaml.safe_load((K8S / "secret.example.yaml").read_text(encoding="utf-8"))
     assert asked <= set(example["stringData"])
     assert all(value == "replace-me" for value in example["stringData"].values())  # the example holds no real value
-    script = (ROOT / "scripts" / "k8s_secret.py").read_text(encoding="utf-8")
-    assert all(key in script for key in asked)
+    # The general script stores most keys; the Langfuse keys come from their own script (the .env address is not valid in a pod).
+    scripts = "".join(
+        (ROOT / "scripts" / name).read_text(encoding="utf-8") for name in ("k8s_secret.py", "k8s_langfuse.py")
+    )
+    assert all(key in scripts for key in asked)
 
 
 def test_a_secret_is_never_part_of_what_is_applied_from_git():

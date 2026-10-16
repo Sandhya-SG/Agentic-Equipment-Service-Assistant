@@ -71,6 +71,17 @@ spec:
             - name: MONITOR_TOKEN                   # protects GET /api/monitoring and the /monitor page; without it the endpoint answers 503 here
               valueFrom:
                 secretKeyRef: {name: aem-secrets, key: MONITOR_TOKEN, optional: true}
+            # Langfuse tracing is off unless BOTH keys are in the secret (scripts/k8s_langfuse.py enable). Host and keys
+            # come together from the same optional secret, so keys can never be set without the host they belong to.
+            - name: LANGFUSE_PUBLIC_KEY
+              valueFrom:
+                secretKeyRef: {name: aem-secrets, key: LANGFUSE_PUBLIC_KEY, optional: true}
+            - name: LANGFUSE_SECRET_KEY
+              valueFrom:
+                secretKeyRef: {name: aem-secrets, key: LANGFUSE_SECRET_KEY, optional: true}
+            - name: LANGFUSE_HOST
+              valueFrom:
+                secretKeyRef: {name: aem-secrets, key: LANGFUSE_HOST, optional: true}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true            # writable paths are the mounted volumes below
