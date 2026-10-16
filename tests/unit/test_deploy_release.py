@@ -1,6 +1,7 @@
 """The deploy script: approved tags only, digests not tags, every pod checked, free smoke tests. No cluster is used."""
 
 import importlib.util
+import json
 import shutil
 import subprocess
 import sys
@@ -255,3 +256,135 @@ def test_latest_is_refused(monkeypatch, capsys):
 def test_a_tag_is_required_unless_rolling_back():
     with pytest.raises(SystemExit):
         dr.main([])
+
+
+# --- applying, recording and rolling back (the cluster and the registry are faked) ---
+
+
+@pytest.fixture
+def cluster(monkeypatch, tmp_path):
+    """Fake everything outside the script: the registry, kubectl, the pods and the smoke test."""
+    state = {
+        "commands": [],
+        "applied_kustomization": None,
+        "recorded": [],
+        "order": [],
+        "pods": None,
+        "smoke": [],
+        "wait": None,
+    }
+
+    def run(command, check=True):
+        state["commands"].append(command)
+        if command[:2] == ["kubectl", "apply"]:
+            state["order"].append("apply")
+            state["applied_kustomization"] = (Path(command[-1]) / "kustomization.yaml").read_text(encoding="utf-8")
+        if "undo" in command:
+            state["order"].append("undo " + command[-1])
+        return "applied"
+
+    def wait(kubectl):
+        state["order"].append("wait")
+        if state["wait"]:
+            raise dr.DeployError(state["wait"])
+
+    def pods(kubectl, service):
+        state["order"].append(f"pods {service}")
+        digest = DIGESTS[service]
+        return state["pods"] or {"items": [pod("p-0", service, f"ghcr.io/o/asa-{service}@{digest}")]}
+
+    def smoke(kubectl, commit):
+        state["order"].append("smoke")
+        return state["smoke"]
+
+    monkeypatch.setattr(dr, "run", run)
+    monkeypatch.setattr(dr, "find_kubectl", lambda: "kubectl")
+    monkeypatch.setattr(dr, "resolve_digest", lambda owner, service, tag: DIGESTS[service])
+    monkeypatch.setattr(dr, "current_images", lambda kubectl: {"backend": "old-backend", "frontend": "old-frontend"})
+    monkeypatch.setattr(dr, "wait_for_rollouts", wait)
+    monkeypatch.setattr(dr, "pods", pods)
+    monkeypatch.setattr(dr, "smoke_test", smoke)
+    monkeypatch.setattr(dr, "record", lambda entry: state["recorded"].append(entry))
+    return state
+
+
+def test_a_good_deployment_applies_then_waits_then_checks_the_digests_then_smoke_tests_then_records_ok(cluster, capsys):
+    assert dr.main(["release-f049973", "--owner", "Sandhya-SG", "--apply"]) == 0
+    assert cluster["order"] == ["apply", "wait", "pods backend", "pods frontend", "smoke"]
+    [entry] = cluster["recorded"]
+    assert entry["result"] == "ok" and entry["approved"] is True and entry["digests"] == DIGESTS
+    assert entry["previous"] == {"backend": "old-backend", "frontend": "old-frontend"} and entry["problems"] == []
+    assert "OK:" in capsys.readouterr().out
+
+
+def test_what_is_applied_is_a_copy_pinned_to_the_digests_and_the_repository_file_is_untouched(cluster):
+    before = (ROOT / "k8s" / "kustomization.yaml").read_text(encoding="utf-8")
+    dr.main(["release-f049973", "--owner", "Sandhya-SG", "--apply"])
+    applied = cluster["applied_kustomization"]
+    assert f"digest: {BACKEND}" in applied and f"digest: {FRONTEND}" in applied and "newTag:" not in applied
+    assert (ROOT / "k8s" / "kustomization.yaml").read_text(encoding="utf-8") == before
+
+
+def test_a_pod_on_the_wrong_image_fails_the_deployment_records_it_and_names_the_rollback(cluster, capsys):
+    cluster["pods"] = {"items": [pod("backend-0", "backend", "ghcr.io/o/asa-backend@sha256:" + "d" * 64)]}
+    assert dr.main(["release-f049973", "--owner", "Sandhya-SG", "--apply"]) == 1
+    assert "smoke" not in cluster["order"]  # a wrong image is not smoke tested as if it were right
+    assert cluster["recorded"][0]["result"] == "failed" and "expected" in cluster["recorded"][0]["problems"][0]
+    assert "--rollback" in capsys.readouterr().out
+
+
+def test_a_failed_smoke_check_fails_the_deployment_and_is_recorded(cluster, capsys):
+    cluster["smoke"] = ["the injection probe was not blocked (HTTP 200, status 'ok')"]
+    assert dr.main(["release-f049973", "--owner", "Sandhya-SG", "--apply"]) == 1
+    assert cluster["recorded"][0]["result"] == "failed" and "not blocked" in cluster["recorded"][0]["problems"][0]
+    assert "--rollback" in capsys.readouterr().out
+
+
+def test_a_rollout_that_never_completes_is_recorded_and_answered_with_the_rollback_not_lost(cluster, capsys):
+    cluster["wait"] = "timed out waiting for the condition"
+    assert dr.main(["release-f049973", "--owner", "Sandhya-SG", "--apply"]) == 1
+    [entry] = cluster["recorded"]  # the failure is on record
+    assert entry["result"] == "failed" and "timed out" in entry["problems"][0]
+    assert "--rollback" in capsys.readouterr().out
+
+
+def test_an_unapproved_deployment_is_recorded_as_such(cluster):
+    dr.main(["sha-f049973", "--unapproved", "--owner", "Sandhya-SG", "--apply"])
+    assert cluster["recorded"][0]["approved"] is False
+
+
+def test_rollback_undoes_the_backend_then_the_frontend_waits_and_records(cluster, monkeypatch, capsys):
+    assert dr.main(["--rollback"]) == 0
+    assert cluster["order"] == ["undo statefulset/backend", "undo deployment/frontend", "wait"]
+    assert cluster["recorded"][0]["ref"] == "rollback" and cluster["recorded"][0]["result"] == "ok"
+    assert "rolled back" in capsys.readouterr().out
+
+
+def test_a_rollback_that_fails_is_reported_not_hidden(cluster, monkeypatch, capsys):
+    def failing_run(command, check=True):
+        raise dr.DeployError("rollout undo failed: no previous revision")
+
+    monkeypatch.setattr(dr, "run", failing_run)
+    assert dr.main(["--rollback"]) == 1
+    assert "no previous revision" in capsys.readouterr().out
+
+
+def test_the_deployment_record_is_one_json_line_per_event_in_the_logs_folder(monkeypatch, tmp_path):
+    monkeypatch.setattr(dr, "ROOT", tmp_path)
+    dr.record({"ref": "release-a", "result": "ok"})
+    dr.record({"ref": "rollback", "result": "ok"})
+    written = (tmp_path / "logs" / "deployments.jsonl").read_text(encoding="utf-8").splitlines()
+    assert [json.loads(line)["ref"] for line in written] == ["release-a", "rollback"]
+
+
+def test_the_version_token_is_read_from_the_secret_and_a_missing_one_is_none(monkeypatch):
+    import base64
+
+    class Result:
+        def __init__(self, code, out):
+            self.returncode, self.stdout = code, out
+
+    monkeypatch.setattr(dr.subprocess, "run", lambda *a, **k: Result(0, base64.b64encode(b"tok-123").decode()))
+    assert dr.version_token("kubectl") == "tok-123"
+    monkeypatch.setattr(dr.subprocess, "run", lambda *a, **k: Result(1, ""))
+    assert dr.version_token("kubectl") is None

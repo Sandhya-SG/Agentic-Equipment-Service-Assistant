@@ -126,3 +126,19 @@ def test_a_suite_that_cannot_run_is_skipped_not_failed_so_enforce_is_safe_withou
     targets = {"retrieval": {"area_hit_at_5": {"min": 0.85}}, "injection": {"block_rate_all": {"min": 0.9}}}
     rows = run_eval.check_targets(report, targets)
     assert [(row["suite"], row["met"]) for row in rows] == [("injection", True)]
+
+
+# --- the manifest scan ---
+
+
+def test_the_manifests_are_scanned_and_a_high_or_critical_finding_fails_the_job(ci):
+    job = ci["manifest-scan"]
+    scan = next(step for step in job["steps"] if "trivy-action" in step.get("uses", ""))
+    options = scan["with"]
+    assert options["scan-type"] == "config" and options["scan-ref"] == "k8s"
+    assert options["exit-code"] == "1" and set(options["severity"].split(",")) == {"CRITICAL", "HIGH"}
+    assert "continue-on-error" not in job and "continue-on-error" not in scan
+
+
+def test_the_image_build_needs_the_manifest_scan_so_a_misconfiguration_cannot_release(ci):
+    assert "manifest-scan" in ci["build"]["needs"]

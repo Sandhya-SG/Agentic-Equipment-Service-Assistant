@@ -162,6 +162,31 @@ jobs:
     uses: ./.github/workflows/promptfoo-tests-ci.yml
 
   # ---------------------------------------------------------------------
+  # 4c. Kubernetes manifest scan — Trivy checks k8s/ for misconfigurations
+  #     (privileged containers, missing limits, writable root filesystems ...).
+  #     HIGH and CRITICAL findings fail the job, and the image build needs it.
+  #     Clean today; a MEDIUM false alarm on the setting names BACKEND_PORT and
+  #     BACKEND_TIMEOUT ("sensitive" keys) is below the threshold on purpose.
+  # ---------------------------------------------------------------------
+  manifest-scan:
+    name: Kubernetes Manifest Scan
+    runs-on: ubuntu-latest
+    needs: [lint]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Scan the manifests with Trivy
+        uses: aquasecurity/trivy-action@v0.36.0
+        env:
+          TRIVY_DISABLE_VEX_NOTICE: "true"
+        with:
+          scan-type: config
+          scan-ref: k8s
+          format: table
+          exit-code: "1"
+          severity: CRITICAL,HIGH
+
+  # ---------------------------------------------------------------------
   # 5. Build, scan and publish both application containers
   #    - every run: build both images and scan them with Trivy
   #    - push to main only: publish to GHCR, tagged with the commit SHA
@@ -170,7 +195,7 @@ jobs:
   build:
     name: Build Containers
     runs-on: ubuntu-latest
-    needs: [unit-tests, security-tests, promptfoo, dependency-scan]
+    needs: [unit-tests, security-tests, promptfoo, manifest-scan, dependency-scan]
     permissions:
       contents: read
       packages: write
