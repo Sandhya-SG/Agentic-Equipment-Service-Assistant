@@ -24,6 +24,7 @@ import hashlib
 import json
 import os
 import statistics
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
@@ -46,6 +47,20 @@ from asa.versioning import build_info
 
 GOLD = load_gold_set()
 SCORES: dict = {"cases": {}, "skipped": {}, "errors": {}, "judge_fallbacks": {}, "resumed": []}
+
+# What the judge cost, as DeepEval itself reports it for each completed measurement (dollars, at the judge model's list
+# price). A measurement that failed and was retried is not counted, so this can only under-count; the OpenAI usage page is
+# the authoritative figure. The agents' own calls are not here: the application's spend ledger (scripts/openai_spend.py).
+JUDGE_COST = {"usd": 0.0}
+_COST_LOCK = threading.Lock()
+
+
+def _add_judge_cost(metric) -> None:
+    cost = getattr(metric, "evaluation_cost", None)
+    if isinstance(cost, (int, float)):
+        with _COST_LOCK:
+            JUDGE_COST["usd"] += float(cost)
+
 
 # A transient judge error (timeout, rate limit, dropped connection) is retried with a growing pause before the
 # question is called unscored.
@@ -153,6 +168,7 @@ def _measure_once(case: LLMTestCase, model: str) -> dict[str, tuple[float, str]]
             out = {}
             for metric in _metrics(model):
                 metric.measure(case)
+                _add_judge_cost(metric)
                 name = metric.name if isinstance(metric, GEval) else metric.__class__.__name__
                 out[name] = (float(metric.score), str(getattr(metric, "reason", "") or ""))
             return out
@@ -203,6 +219,7 @@ def test_answer_is_grounded(item, pipeline):
 
     state = pipeline(item)
     case = _gradable(item, state)
+    cost_before = JUDGE_COST["usd"]
     try:
         summary, judge = measure(case)
     except RuntimeError as error:
@@ -227,6 +244,7 @@ def test_answer_is_grounded(item, pipeline):
         "scores": scores,
         "runs": {name: summary[name]["runs"] for name in summary},
         "spread": {name: summary[name]["spread"] for name in summary},
+        "judge_cost_usd": round(JUDGE_COST["usd"] - cost_before, 4),
         "grounded": grounded,
         "relevant": relevant,
         "passed": grounded and relevant,  # the earlier combined rule, kept for comparison (strict_rate)
@@ -245,6 +263,9 @@ def _summary() -> dict:
         "rubric": rubric(),
         "versions": build_info(include_datasets=True),  # code, models, prompts, manuals, datasets
         "repeats": REPEATS,
+        "judge_cost_usd": round(
+            JUDGE_COST["usd"], 4
+        ),  # this session's judge calls, as DeepEval reports them (see JUDGE_COST)
         "judge_fallbacks": dict(SCORES["judge_fallbacks"]),  # question -> the other judge used for it
         "resumed": list(SCORES["resumed"]),  # questions kept from an earlier session of the same run
         "gradable": n,
