@@ -62,6 +62,22 @@ def _add_judge_cost(metric) -> None:
             JUDGE_COST["usd"] += float(cost)
 
 
+# A spending guard of its own, because the application's spend ledger does not see the judge. DEEPEVAL_MAX_JUDGE_COST_USD is
+# compared with JUDGE_COST above, which is a LOWER BOUND (the 16 Oct pilot showed it was about 60% of the real bill), so set
+# it to about 60% of the dollars you are willing to spend. Unset or 0: no guard. When it is reached the session stops before
+# the next question and DEEPEVAL_RESUME=1 continues it later, keeping the questions already scored.
+JUDGE_BUDGET = float(os.getenv("DEEPEVAL_MAX_JUDGE_COST_USD", "0") or 0)
+
+
+def _stop_if_over_budget() -> None:
+    if JUDGE_BUDGET > 0 and JUDGE_COST["usd"] >= JUDGE_BUDGET:
+        pytest.exit(
+            f"stopped before the next question: the judge cost reported so far (${JUDGE_COST['usd']:.2f}) reached "
+            f"DEEPEVAL_MAX_JUDGE_COST_USD (${JUDGE_BUDGET:.2f}). Run again with DEEPEVAL_RESUME=1 to continue.",
+            returncode=3,
+        )
+
+
 # A transient judge error (timeout, rate limit, dropped connection) is retried with a growing pause before the
 # question is called unscored.
 JUDGE_ATTEMPTS = 3
@@ -217,6 +233,7 @@ def test_answer_is_grounded(item, pipeline):
         assert SCORES["cases"][item["id"]]["grounded"], "; ".join(SCORES["cases"][item["id"]]["failures"])
         return
 
+    _stop_if_over_budget()
     state = pipeline(item)
     case = _gradable(item, state)
     cost_before = JUDGE_COST["usd"]
