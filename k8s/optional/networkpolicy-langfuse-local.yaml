@@ -1,0 +1,24 @@
+# OPTIONAL, and NOT part of kustomization.yaml: apply it only to send traces to a Langfuse running on the same PC
+# (docker-compose.langfuse.yml). `python scripts/k8s_langfuse.py enable` applies it and `disable` removes it.
+#
+# NetworkPolicies add up, so this lets the backend pods ALSO reach one address and one port: Docker Desktop's host
+# (host.docker.internal, 192.168.65.254 on the kind nodes), TCP 3000, where Langfuse listens. Nothing else changes: the backend
+# still reaches the internet only on port 443 and the frontend still reaches only the backend. The address is Docker
+# Desktop's fixed host gateway; `scripts/k8s_langfuse.py enable` checks it from a node before applying and refuses if it differs.
+#
+# Limits: this ties the cluster to the machine it runs on. A hosted Langfuse over HTTPS (port 443, already allowed) needs no
+# policy at all, only the keys and its address in the secret.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: backend-to-local-langfuse
+  namespace: aem
+spec:
+  podSelector:
+    matchLabels: {app: backend}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - ipBlock: {cidr: 192.168.65.254/32}
+      ports:
+        - {protocol: TCP, port: 3000}

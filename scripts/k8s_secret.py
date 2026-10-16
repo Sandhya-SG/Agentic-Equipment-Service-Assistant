@@ -26,6 +26,8 @@ OPTIONAL_KEYS = (
     "REVIEWER_TOKEN",
     "MONITOR_TOKEN",
 )  # stored when set in .env or the environment
+# The Langfuse keys are NOT here on purpose: LANGFUSE_HOST in .env is usually http://localhost:3000, which inside a pod is the
+# pod itself. `python scripts/k8s_langfuse.py enable` sets them with an address the pods can reach.
 
 
 def find_kubectl() -> str:
